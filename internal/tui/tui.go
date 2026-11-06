@@ -143,17 +143,28 @@ func (m *Model) addPlaceholders() {
 }
 
 func (m *Model) Init() tea.Cmd {
-	// Start on the slot under the cursor would be nicer; start on the first
-	// value-bearing slot after the command path for now.
-	m.focus = 0
-	for i, s := range m.cmd.Slots {
-		if s.Kind == model.Flag {
-			m.focus = i
-			break
-		}
-	}
+	m.focus = m.initialFocus()
 	m.refocus()
 	return nil
+}
+
+// initialFocus returns the slot to start on: the first of the plugin's
+// focus entries present in the command, else the first value-bearing flag,
+// else the first slot. Starting on the slot under the cursor would be nicer.
+func (m *Model) initialFocus() int {
+	if m.sp != nil {
+		for _, e := range m.sp.Focus {
+			if i := m.cmd.Find(m.sp.FocusKey(e)); i >= 0 {
+				return i
+			}
+		}
+	}
+	for i, s := range m.cmd.Slots {
+		if s.Kind == model.Flag {
+			return i
+		}
+	}
+	return 0
 }
 
 func (m *Model) onAddSlot() bool { return m.focus >= len(m.cmd.Slots) }

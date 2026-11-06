@@ -35,6 +35,9 @@ type Spec struct {
 	Positionals []PosSpec           `yaml:"positionals"`
 	Providers   map[string]Provider `yaml:"providers"`
 	Transforms  []Transform         `yaml:"transforms"`
+	// Focus lists the slots the editor starts on, in order of preference.
+	// The first one present in the command wins.
+	Focus FocusList `yaml:"focus"`
 
 	// Source is the file the spec was loaded from.
 	Source string `yaml:"-"`
@@ -83,6 +86,37 @@ func (t Transform) Target() string {
 		return t.Flag
 	}
 	return t.Slot
+}
+
+// FocusList is a list of slot references that unmarshals from either a
+// single string or a list. An entry is a positional name, "pos:N", a long
+// flag name, or a flag as written ("-n", "--namespace", "-name").
+type FocusList []string
+
+func (f *FocusList) UnmarshalYAML(n *yaml.Node) error {
+	if n.Kind == yaml.ScalarNode {
+		*f = FocusList{n.Value}
+		return nil
+	}
+	var l []string
+	if err := n.Decode(&l); err != nil {
+		return err
+	}
+	*f = l
+	return nil
+}
+
+// FocusKey returns the slot key a focus entry refers to. Flags written with
+// dashes resolve through the spec, falling back to the name without dashes
+// like the classifier does for flags the spec doesn't know.
+func (s *Spec) FocusKey(entry string) string {
+	if !strings.HasPrefix(entry, "-") {
+		return entry
+	}
+	if f := s.Flag(entry); f != nil {
+		return f.Name
+	}
+	return strings.TrimLeft(entry, "-")
 }
 
 // Duration is a time.Duration that unmarshals from strings like "30s".
@@ -203,6 +237,11 @@ func (s *Spec) Validate() []error {
 			add("provider %q: exec is required", name)
 		}
 	}
+	for _, e := range s.Focus {
+		if strings.Trim(e, "-") == "" {
+			add("focus: empty slot reference %q", e)
+		}
+	}
 	keys := map[string]bool{}
 	for _, t := range s.Transforms {
 		if t.Key == "" {
@@ -249,9 +288,16 @@ type Registry struct {
 // NewRegistry returns an empty registry.
 func NewRegistry() *Registry { return &Registry{byCmd: map[string]*Spec{}} }
 
-// Add registers s, replacing any spec for the same command. Later sources
-// therefore override earlier ones.
+// Add registers s, replacing any spec for the same command along with its
+// aliases. Later sources therefore override earlier ones.
 func (r *Registry) Add(s *Spec) {
+	if old := r.byCmd[s.Match.Command]; old != nil {
+		for k, v := range r.byCmd {
+			if v == old {
+				delete(r.byCmd, k)
+			}
+		}
+	}
 	r.byCmd[s.Match.Command] = s
 	for _, a := range s.Match.Aliases {
 		r.byCmd[a] = s

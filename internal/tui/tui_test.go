@@ -96,6 +96,73 @@ func typ(s string) tea.KeyMsg      { return tea.KeyMsg{Type: tea.KeyRunes, Runes
 func alt(s string) tea.KeyMsg      { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s), Alt: true} }
 func key(k tea.KeyType) tea.KeyMsg { return tea.KeyMsg{Type: k} }
 
+func TestInitialFocus(t *testing.T) {
+	const flux = `
+match: { command: flux }
+positionals:
+  - { index: 0, name: verb }
+  - { index: 1, name: kind }
+  - { index: 2, name: name }
+focus: kind
+`
+	const find = `
+match: { command: find }
+flags:
+  - { name: type, short: type, takes: value }
+focus: [-name, -type]
+`
+	const kubectl = `
+match: { command: kubectl }
+flags:
+  - { name: namespace, short: n, takes: value }
+  - { name: selector, short: l, takes: value }
+focus: [selector, --namespace]
+`
+	const kubectlResource = `
+match: { command: kubectl, aliases: [k] }
+positionals:
+  - { index: 0, name: verb }
+  - { index: 1, name: resource }
+focus: resource
+`
+	for _, tt := range []struct{ spec, line, want string }{
+		{flux, "flux get kustomization", "kind"},
+		{flux, "flux get", "kind"},
+		{flux, "flux", "kind"},
+		// -name isn't declared; takesAll infers that it takes a value.
+		{find, `find . -name "*.txt" -type d`, "name"},
+		{find, "find . -type d", "type"},
+		{kubectl, "kubectl get pods -o wide -n default", "namespace"},
+		{kubectl, "kubectl get pods -n default -l app=web", "selector"},
+		// No match falls back to the first value-bearing flag.
+		{kubectl, "kubectl get pods --output wide", "output"},
+		// k is an alias for the kubecolor wrapper.
+		{kubectlResource, "k get secrets", "resource"},
+		{kubectlResource, "kubectl get secrets", "resource"},
+	} {
+		sp, err := spec.Parse([]byte(tt.spec), "test.yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		reg := spec.NewRegistry()
+		reg.Add(sp)
+		c := spec.Classifier{Specs: reg, Infer: takesAll{}, Aliases: spec.Aliases{"k": "kubecolor"}}
+		cmd := c.Classify(parse.Parse(tt.line), 0)
+		m := newModel(Options{Cmd: cmd, Spec: reg.Lookup(cmd.Name)}, newStyles(lipgloss.NewRenderer(os.Stderr)))
+		if got := m.cmd.Slots[m.initialFocus()].Key; got != tt.want {
+			t.Errorf("%q: focus = %s, want %s", tt.line, got, tt.want)
+		}
+		if got := m.cmd.Render(); got != tt.line {
+			t.Errorf("%q: placeholders changed render to %q", tt.line, got)
+		}
+	}
+}
+
+// takesAll infers that every unknown flag takes a value.
+type takesAll struct{}
+
+func (takesAll) TakesValue(string, string) (bool, bool) { return true, true }
+
 func TestPickFromCompletion(t *testing.T) {
 	h := newHarness(t, "k get pods -n monitoring -o wide", nil)
 	if got := h.m.cmd.Slots[h.m.focus].Key; got != "namespace" {

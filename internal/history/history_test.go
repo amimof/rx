@@ -96,6 +96,19 @@ func TestIndex(t *testing.T) {
 	}
 }
 
+func TestIndexAliasToWrapper(t *testing.T) {
+	c := classifier(t)
+	c.Aliases = spec.Aliases{"k": "kubecolor"}
+	x := Build([]Entry{
+		{Cmd: "k get pods -n monitoring", Time: 1700000000},
+		{Cmd: "kubectl get pods -n monitoring", Time: 1700000100},
+	}, c)
+	ns := x.Candidates("kubectl", "namespace", time.Unix(1700002000, 0))
+	if len(ns) != 1 || ns[0].Count != 2 {
+		t.Fatalf("namespace candidates = %+v", ns)
+	}
+}
+
 func TestLoadCache(t *testing.T) {
 	dir := t.TempDir()
 	hf := filepath.Join(dir, "hist")
