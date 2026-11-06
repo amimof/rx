@@ -1,6 +1,7 @@
 package history
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -103,7 +104,7 @@ func TestLoadCache(t *testing.T) {
 	}
 	cache := filepath.Join(dir, "cache")
 	for range 2 {
-		x, err := Load(hf, cache, "salt", classifier(t))
+		x, err := Load(hf, cache, "salt", ReadZsh, classifier(t))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -120,7 +121,7 @@ func TestLoadCache(t *testing.T) {
 	f, _ := os.OpenFile(hf, os.O_APPEND|os.O_WRONLY, 0)
 	f.WriteString(": 1700002000:0;k get pods -n production\n")
 	f.Close()
-	x, err := Load(hf, cache, "salt", classifier(t))
+	x, err := Load(hf, cache, "salt", ReadZsh, classifier(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,12 +133,36 @@ func TestLoadCache(t *testing.T) {
 	if err := os.WriteFile(hf, []byte(": 1:0;k get pods -n only\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	x, err = Load(hf, cache, "salt", classifier(t))
+	x, err = Load(hf, cache, "salt", ReadZsh, classifier(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c := x.Candidates("kubectl", "namespace", time.Now()); len(c) != 1 || c[0].Value != "only" {
 		t.Fatalf("after rewrite = %+v", c)
+	}
+}
+
+func TestLoadReader(t *testing.T) {
+	dir := t.TempDir()
+	hf := filepath.Join(dir, "hist")
+	if err := os.WriteFile(hf, []byte("k get pods -n a\nk get pods -n b\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Load must parse with the reader it is given, not ReadZsh.
+	read := func(r io.Reader) ([]Entry, error) {
+		es, err := ReadZsh(r)
+		for i := range es {
+			es[i].Cmd = strings.Replace(es[i].Cmd, "-n ", "-n x", 1)
+		}
+		return es, err
+	}
+	x, err := Load(hf, "", "salt", read, classifier(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := x.Candidates("kubectl", "namespace", time.Now())
+	if len(c) != 2 || c[0].Value != "xa" || c[1].Value != "xb" {
+		t.Fatalf("candidates = %+v", c)
 	}
 }
 

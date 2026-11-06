@@ -10,6 +10,7 @@ import (
 	"github.com/amimof/rx/internal/complete/provider"
 	"github.com/amimof/rx/internal/model"
 	"github.com/amimof/rx/internal/parse"
+	"github.com/amimof/rx/internal/shell/proto"
 	"github.com/amimof/rx/internal/spec"
 )
 
@@ -136,6 +137,43 @@ func TestStartNeverSendsSynchronously(t *testing.T) {
 			}
 		case <-time.After(5 * time.Second):
 			t.Fatalf("slot %d: no update", i)
+		}
+	}
+}
+
+// fakeShell answers completions with the request line, and INFO with a
+// non-cobra completion function.
+type fakeShell struct{ infos int }
+
+func (f *fakeShell) Name() string { return "fakesh" }
+
+func (f *fakeShell) Complete(_ context.Context, req complete.Request) (complete.Result, error) {
+	return complete.Result{Candidates: []complete.Candidate{{Value: req.Line, Source: "fakesh"}}}, nil
+}
+
+func (f *fakeShell) Info(context.Context, string) (proto.Info, error) {
+	f.infos++
+	return proto.Info{CompFunc: "_other"}, nil
+}
+
+func TestEngineShell(t *testing.T) {
+	for _, backend := range []string{"shell", "auto"} {
+		sp, err := spec.Parse([]byte("match: { command: other }\ncomplete: "+backend+"\n"), "other.yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		reg := spec.NewRegistry()
+		reg.Add(sp)
+		cmd := (&spec.Classifier{Specs: reg}).Classify(parse.Parse("other a b"), 0)
+		sh := &fakeShell{}
+		e := New(sh, nil)
+		ups := collect(t, e, cmd, sp, cmd.Find("pos:1"))
+		last := ups[len(ups)-1]
+		if last.Source != "fakesh" || len(last.Result.Candidates) != 1 || last.Result.Candidates[0].Value != "other a " {
+			t.Errorf("%s: updates = %+v", backend, ups)
+		}
+		if want := map[string]int{"shell": 0, "auto": 1}[backend]; sh.infos != want {
+			t.Errorf("%s: %d INFO requests, want %d", backend, sh.infos, want)
 		}
 	}
 }

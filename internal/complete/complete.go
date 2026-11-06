@@ -42,7 +42,7 @@ type Request struct {
 	// Argv is the command with aliases resolved and unquoted words. The last
 	// element is the (possibly empty) word being completed.
 	Argv []string
-	// Line is the same command as shell text for the zsh backend, keeping
+	// Line is the same command as shell text for the shell backend, keeping
 	// the command word as typed so the shell resolves aliases itself. The
 	// cursor is at the end of Line.
 	Line string
@@ -127,33 +127,4 @@ func SynthesizeFlags(cmd *model.Command) Request {
 	}
 	argv = append(argv, "-")
 	return Request{Argv: argv, Line: strings.Join(line, " ") + " -"}
-}
-
-// Escape encodes s for the line protocol between rx and the zsh widget.
-func Escape(s string) string {
-	return strings.NewReplacer(`\`, `\\`, "\n", `\n`, "\t", `\t`).Replace(s)
-}
-
-// Unescape reverses Escape.
-func Unescape(s string) string {
-	if !strings.Contains(s, `\`) {
-		return s
-	}
-	var sb strings.Builder
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\\' && i+1 < len(s) {
-			i++
-			switch s[i] {
-			case 'n':
-				sb.WriteByte('\n')
-			case 't':
-				sb.WriteByte('\t')
-			default:
-				sb.WriteByte(s[i])
-			}
-			continue
-		}
-		sb.WriteByte(s[i])
-	}
-	return sb.String()
 }

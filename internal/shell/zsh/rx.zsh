@@ -1,15 +1,18 @@
 # rx zsh integration. Load with:  eval "$(rx init zsh)"
 #
-# The rx-edit widget runs `rx edit` as a coprocess. rx draws its editor on
-# /dev/tty and sends requests over the coprocess pipes; this widget answers
-# completion requests with the live shell's completion system, so results
-# match what <Tab> would give, with the same environment, aliases and
-# zstyles. See internal/complete/zsh for the protocol.
+# The rx-edit widget runs `rx edit` in the background with its stdin and
+# stdout on a pair of fifos. rx draws its editor on /dev/tty and sends
+# requests over the fifos; this widget answers completion requests with the
+# live shell's completion system, so results match what <Tab> would give,
+# with the same environment, aliases and zstyles. See internal/shell/proto
+# for the protocol.
 
 zmodload zsh/zutil 2>/dev/null
 
 typeset -g _rx_bin=${_rx_bin:-rx}
 typeset -ga _rx_hits _rx_descs _rx_tags _rx_msgs
+# Write end of the request fifo while rx-edit runs.
+typeset -g _rx_w=
 
 # Escape for the line protocol: \ -> \\, newline -> \n, tab -> \t.
 _rx_esc() {
@@ -19,7 +22,7 @@ _rx_esc() {
 }
 
 # Reverse of _rx_esc. Only \\, \n and \t are escapes; any other escaped
-# character stands for itself, matching complete.Unescape.
+# character stands for itself, matching proto.Unescape.
 _rx_unesc() {
   local s=$1 out= c
   while [[ $s == *\\* ]]; do
@@ -129,7 +132,7 @@ _rx_info() {
 # Sends response lines to rx in one write. If rx has exited, the error is
 # swallowed rather than printed over the prompt; the read loop then sees EOF.
 _rx_reply() {
-  print -rp -l -- "$@" 2>/dev/null
+  print -r -u $_rx_w -l -- "$@" 2>/dev/null
 }
 
 # COMPLETE <line>: complete at the end of line and send the matches.
@@ -153,8 +156,8 @@ _rx_complete() {
 }
 
 rx-edit() {
-  # nomonitor keeps the coprocess in the shell's process group so it may
-  # read the terminal.
+  # nomonitor keeps rx in the shell's process group so it may read the
+  # terminal.
   setopt localoptions nomonitor nonotify noshwordsplit
   if [[ -z ${BUFFER//[[:space:]]/} ]]; then
     zle -M "rx: nothing to edit"
@@ -175,32 +178,48 @@ rx-edit() {
   done
   local -x RX_ALIASES=${(pj:\n:)al}
   local -x RX_HISTFILE=${HISTFILE:-$HOME/.zsh_history}
-  local -x RX_COPROC=1
 
-  zle -I
-  coproc "$_rx_bin" edit --cursor "$CURSOR" -- "$BUFFER" 2>>$log
-
-  local req done=0 ended=0 err=
+  local req done=0 ended=0 err= d= r=
   local -a f
-  while IFS= read -r -p req; do
-    f=("${(@ps:\t:)req}")
-    case $f[1] in
-      (INFO)     _rx_unesc "$f[2]"; _rx_info "$REPLY" ;;
-      (COMPLETE) _rx_unesc "$f[2]"; _rx_complete "$REPLY" ;;
-      (DONE)
-        _rx_unesc "$f[3]"
-        BUFFER=$REPLY
-        CURSOR=$f[2]
-        done=1 ended=1
-        break ;;
-      (CANCEL) ended=1; break ;;
-      (ERROR)  _rx_unesc "$f[2]"; err=$REPLY; ended=1; break ;;
-    esac
-  done
-  # Starting a new coprocess closes the pipes to the old one. Reap it here,
-  # otherwise zsh reports "[N] + done :" at the next prompt.
-  coproc :
-  wait $! 2>/dev/null
+  _rx_w=
+  zle -I
+  {
+    if ! d=$(mktemp -d "${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/rx.XXXXXX" 2>/dev/null); then
+      d= err="cannot create a temporary directory" ended=1
+    elif ! mkfifo -m 600 $d/in $d/out 2>/dev/null; then
+      err="mkfifo failed in ${d:h}" ended=1
+    else
+      # &! disowns rx, so no job notice appears at the next prompt. Opening
+      # a fifo blocks until the other end is opened too: the order here
+      # matches rx's redirections, and neither side opens one read-write,
+      # so rx exiting is seen as EOF below.
+      "$_rx_bin" edit --shell zsh --cursor "$CURSOR" -- "$BUFFER" <$d/in >$d/out 2>>$log &!
+      exec {_rx_w}>$d/in {r}<$d/out
+      # Open descriptors keep working after the names are gone.
+      rm -rf -- $d
+
+      while IFS= read -r -u $r req; do
+        f=("${(@ps:\t:)req}")
+        case $f[1] in
+          (INFO)     _rx_unesc "$f[2]"; _rx_info "$REPLY" ;;
+          (COMPLETE) _rx_unesc "$f[2]"; _rx_complete "$REPLY" ;;
+          (DONE)
+            _rx_unesc "$f[3]"
+            BUFFER=$REPLY
+            CURSOR=$f[2]
+            done=1 ended=1
+            break ;;
+          (CANCEL) ended=1; break ;;
+          (ERROR)  _rx_unesc "$f[2]"; err=$REPLY; ended=1; break ;;
+        esac
+      done
+    fi
+  } always {
+    [[ -n $_rx_w ]] && exec {_rx_w}>&-
+    [[ -n $r ]] && exec {r}<&-
+    _rx_w=
+    [[ -n $d && -d $d ]] && rm -rf -- $d
+  }
   if (( ! done )); then
     BUFFER=$orig_buf
     CURSOR=$orig_cur
@@ -223,7 +242,7 @@ rx-bind() {
 
 # rx-doctor: rx's own checks plus the shell-side state rx can't see.
 rx-doctor() {
-  "$_rx_bin" doctor
+  "$_rx_bin" doctor --shell zsh
   print -r -- "widget:"
   print -r -- "  binary       $_rx_bin"
   print -r -- "  main keymap  ${${(z)$(bindkey -lL main)}[3]}"

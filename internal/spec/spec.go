@@ -18,7 +18,8 @@ import (
 const (
 	CompleteAuto  = "auto"
 	CompleteCobra = "cobra"
-	CompleteZsh   = "zsh"
+	// CompleteShell asks the shell rx runs under, as <Tab> would.
+	CompleteShell = "shell"
 	CompleteNone  = "none"
 )
 
@@ -156,7 +157,9 @@ func (s *Spec) Validate() []error {
 		add("match.command is required")
 	}
 	switch s.Complete {
-	case "", CompleteAuto, CompleteCobra, CompleteZsh, CompleteNone:
+	case "", CompleteAuto, CompleteCobra, CompleteShell, CompleteNone:
+	case "zsh":
+		add("complete: unknown backend %q (use %q)", s.Complete, CompleteShell)
 	default:
 		add("complete: unknown backend %q", s.Complete)
 	}

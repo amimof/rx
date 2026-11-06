@@ -29,7 +29,7 @@ Suggestions come from:
 
 ## Install
 
-rx currently supports **zsh** only. You need Go to build it.
+rx currently supports **zsh** only (`rx init zsh`). You need Go to build it.
 
 ```sh
 go install github.com/amimof/rx/cmd/rx@latest
@@ -84,6 +84,8 @@ transforms:
   - { key: o, op: cycle, flag: output, desc: "cycle output" }
 ```
 
+By default rx asks your shell for completions, or calls the command's own completion directly when it is built with cobra (like kubectl). Set `complete:` to `shell`, `cobra` or `none` to choose explicitly.
+
 Check your plugin with `rx plugins lint my-plugin.yaml`.
 
 ## Troubleshooting
@@ -101,3 +103,5 @@ go test ./...
 ```
 
 The zsh integration tests need `zsh` installed and are skipped without it.
+
+To add support for another shell, start with the widget contract in [`internal/shell/proto`](internal/shell/proto/proto.go) and the registry in [`internal/shell/shell.go`](internal/shell/shell.go). A new shell needs a widget script under `internal/shell/<name>/`, a history reader and a registry entry. Its widget tests can reuse `internal/shell/testdata/fake-rx`.

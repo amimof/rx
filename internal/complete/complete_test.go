@@ -74,20 +74,6 @@ func TestSynthesizeFlags(t *testing.T) {
 	}
 }
 
-func TestEscape(t *testing.T) {
-	for _, s := range []string{"", "plain", "a\tb", "a\nb", `back\slash`, `\n literal`, "mixed\\\n\t"} {
-		e := complete.Escape(s)
-		for _, c := range e {
-			if c == '\n' || c == '\t' {
-				t.Errorf("Escape(%q) = %q contains separator", s, e)
-			}
-		}
-		if got := complete.Unescape(e); got != s {
-			t.Errorf("round trip %q -> %q -> %q", s, e, got)
-		}
-	}
-}
-
 func TestCache(t *testing.T) {
 	c := &complete.Cache{Dir: t.TempDir()}
 	req := complete.Request{Argv: []string{"kubectl", "get", ""}}
