@@ -332,6 +332,20 @@ func TestWidgetEndToEnd(t *testing.T) {
 		t.Errorf("ran %q", got)
 	}
 
+	// Tabbing through every slot, including value-less flags, must keep the
+	// editor responsive (it used to deadlock on the first such flag).
+	s = newShell(t, bin)
+	s.write(".zshenv", "export XDG_CACHE_HOME="+s.dir+"/cache XDG_CONFIG_HOME="+s.dir+"/config\n")
+	steps = append(typeAndEdit(`fixture tag -a "0.0.0" -m "0.0.0"`), "expect:tab/s-tab")
+	for range 12 {
+		steps = append(steps, "key:\t", "sleep:0.1")
+	}
+	steps = append(steps, "key:\r")
+	s.run(append(steps, s.accept()...)...)
+	if got := s.read("ran"); got != "fixture tag -a 0.0.0 -m 0.0.0\n" {
+		t.Errorf("after tabbing ran %q", got)
+	}
+
 	// Esc Esc cancels and keeps the buffer.
 	s = newShell(t, bin)
 	s.write(".zshenv", "export XDG_CACHE_HOME="+s.dir+"/cache XDG_CONFIG_HOME="+s.dir+"/config\n")

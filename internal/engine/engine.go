@@ -78,32 +78,39 @@ func (b *execBackend) Complete(ctx context.Context, _ complete.Request) (complet
 // Start completes slot focus of cmd (or flag names when focus is -1) and
 // calls send with updates from another goroutine. cmd is read before Start
 // returns, so the caller may keep mutating it.
+//
+// send is never called before Start returns, not even for slots with
+// nothing to complete: the editor calls Start from its event loop, and
+// send delivers to that same loop, so a synchronous call would deadlock.
 func (e *Engine) Start(ctx context.Context, id uint64, cmd *model.Command, sp *spec.Spec, focus int, send func(Update)) {
 	var req complete.Request
 	var prov *execBackend
+	var early *Update // delivered instead of running a backend
 	if focus < 0 {
 		req = complete.SynthesizeFlags(cmd)
 	} else {
 		slot := cmd.Slots[focus]
-		if slot.Kind == model.Bool {
-			send(Update{ID: id, Done: true})
-			return
-		}
 		req = complete.Synthesize(cmd, focus)
-		if name := providerFor(sp, slot); name != "" {
+		if slot.Kind == model.Bool {
+			early = &Update{ID: id, Done: true}
+		} else if name := providerFor(sp, slot); name != "" {
 			p := sp.Providers[name]
 			script, err := provider.Render(p, cmd)
 			if err != nil {
-				send(Update{ID: id, Err: err, Done: true})
-				return
+				early = &Update{ID: id, Err: err, Done: true}
+			} else {
+				prov = &execBackend{name: name, p: p, script: script}
+				// Make the cache key depend on the rendered script.
+				req.Line = script
 			}
-			prov = &execBackend{name: name, p: p, script: script}
-			// Make the cache key depend on the rendered script.
-			req.Line = script
 		}
 	}
 	head, name := cmd.Head.Value, cmd.Name
 	go func() {
+		if early != nil {
+			send(*early)
+			return
+		}
 		var j *job
 		if prov != nil {
 			ttl := time.Duration(prov.p.TTL)

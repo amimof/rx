@@ -106,6 +106,40 @@ func TestEngineProviderAndCache(t *testing.T) {
 	}
 }
 
+// Start must never call send before returning. The editor calls Start from
+// its event loop and send hands the update to that same loop, so a
+// synchronous send deadlocks it.
+func TestStartNeverSendsSynchronously(t *testing.T) {
+	cmd, sp := setup(t, "tool --verbose arg -e dev")
+	// A template that fails to execute, for the provider error path.
+	sp.Providers["envs"] = spec.Provider{Exec: "{{template \"missing\"}}"}
+	e := New(nil, nil)
+	for i := range cmd.Slots {
+		ch := make(chan Update) // unbuffered, like tea.Program.Send
+		returned := make(chan struct{})
+		go func() {
+			e.Start(context.Background(), 1, cmd, sp, i, func(u Update) { ch <- u })
+			close(returned)
+		}()
+		select {
+		case <-returned:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("slot %d (%s): Start blocked on send", i, cmd.Slots[i].Key)
+		}
+		select {
+		case u := <-ch:
+			if !u.Done {
+				// Drain until done so the goroutine exits.
+				for !u.Done {
+					u = <-ch
+				}
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("slot %d: no update", i)
+		}
+	}
+}
+
 func TestEngineNoneAndBool(t *testing.T) {
 	cmd, sp := setup(t, "tool --verbose arg")
 	e := New(nil, nil)
