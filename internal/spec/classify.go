@@ -20,6 +20,15 @@ type Aliases map[string]string
 
 // Resolve returns the command name a word ultimately refers to.
 func (a Aliases) Resolve(word string) string {
+	c := a.Chain(word)
+	return c[len(c)-1]
+}
+
+// Chain returns the names a word passes through while expanding aliases,
+// starting with the word itself, e.g. [k kubectl kubecolor]. An alias that
+// loops ends on the name where the loop closes, as zsh stops expanding there.
+func (a Aliases) Chain(word string) []string {
+	chain := []string{filepath.Base(word)}
 	seen := map[string]bool{}
 	for !seen[word] {
 		seen[word] = true
@@ -37,8 +46,9 @@ func (a Aliases) Resolve(word string) string {
 			i++
 		}
 		word = f[i]
+		chain = append(chain, filepath.Base(word))
 	}
-	return filepath.Base(word)
+	return chain
 }
 
 // Classifier turns parsed segments into slot commands.
@@ -48,12 +58,26 @@ type Classifier struct {
 	Aliases Aliases
 }
 
+// Resolve returns the command name a word refers to. Walking the alias chain
+// from its end, the first name with a spec resolves to that spec's command,
+// so "k" finds kubectl's spec even when it is an alias for a wrapper like
+// kubecolor. Without a spec it is the end of the chain.
+func (c *Classifier) Resolve(word string) string {
+	chain := c.Aliases.Chain(word)
+	for i := len(chain) - 1; i >= 0; i-- {
+		if sp := c.Specs.Lookup(chain[i]); sp != nil {
+			return sp.Match.Command
+		}
+	}
+	return chain[len(chain)-1]
+}
+
 // Classify builds a Command from segment seg of line.
 func (c *Classifier) Classify(line *parse.Line, seg int) *model.Command {
 	s := line.Segments[seg]
 	cmd := &model.Command{
 		Head:   s.Words[0],
-		Name:   c.Aliases.Resolve(s.Words[0].Value),
+		Name:   c.Resolve(s.Words[0].Value),
 		Source: line.Text[s.Start:s.End],
 	}
 	sp := c.Specs.Lookup(cmd.Name)

@@ -183,7 +183,7 @@ func (x *Index) add(entries []Entry, c spec.Classifier) {
 		l := parse.Parse(e.Cmd)
 		lines = append(lines, parsed{l, e.Time})
 		for _, s := range l.Segments {
-			name := c.Aliases.Resolve(s.Words[0].Value)
+			name := c.Resolve(s.Words[0].Value)
 			ws := s.Words[1:]
 			for i, w := range ws {
 				v := w.Value
@@ -287,7 +287,7 @@ func Load(histfile, cacheDir, salt string, read Reader, c spec.Classifier) (*Ind
 	if err != nil {
 		return nil, err
 	}
-	h := sha256.Sum256(fmt.Appendf(nil, "v2\x00%s\x00%s", histfile, salt))
+	h := sha256.Sum256(fmt.Appendf(nil, "v3\x00%s\x00%s", histfile, salt))
 	cachePath := ""
 	var x *Index
 	if cacheDir != "" {

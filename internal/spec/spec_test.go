@@ -6,6 +6,112 @@ import (
 	"testing"
 )
 
+func TestFocus(t *testing.T) {
+	const flags = "match: { command: x }\nflags:\n  - { name: namespace, short: n, takes: value }\n"
+	s, err := Parse([]byte(flags+"focus: kind\n"), "x.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Focus) != 1 || s.Focus[0] != "kind" {
+		t.Fatalf("scalar focus = %q", s.Focus)
+	}
+	s, err = Parse([]byte(flags+"focus: [kind, -n]\n"), "x.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Focus) != 2 || s.Focus[1] != "-n" {
+		t.Fatalf("list focus = %q", s.Focus)
+	}
+	if errs := s.Validate(); len(errs) > 0 {
+		t.Fatalf("unexpected %v", errs)
+	}
+	for entry, want := range map[string]string{
+		"kind":        "kind",
+		"pos:1":       "pos:1",
+		"namespace":   "namespace",
+		"--namespace": "namespace",
+		"-n":          "namespace",
+		"-name":       "name",
+		"--other":     "other",
+	} {
+		if got := s.FocusKey(entry); got != want {
+			t.Errorf("FocusKey(%q) = %q, want %q", entry, got, want)
+		}
+	}
+	s, err = Parse([]byte(flags+"focus: [kind, '', '--']\n"), "x.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if errs := s.Validate(); len(errs) != 2 {
+		t.Fatalf("errors = %v, want 2", errs)
+	}
+}
+
+func TestAliasChain(t *testing.T) {
+	a := Aliases{
+		"k":       "kubectl",
+		"kubectl": "kubecolor",
+		"kc":      "FOO=1 noglob /usr/bin/kubecolor",
+		"loop":    "other",
+		"other":   "loop -x",
+	}
+	for word, want := range map[string]string{
+		"k":    "[k kubectl kubecolor]",
+		"kc":   "[kc kubecolor]",
+		"git":  "[git]",
+		"loop": "[loop other loop]",
+	} {
+		if got := fmt.Sprint(a.Chain(word)); got != want {
+			t.Errorf("Chain(%q) = %s, want %s", word, got, want)
+		}
+	}
+	if got := a.Resolve("k"); got != "kubecolor" {
+		t.Errorf("Resolve(k) = %s", got)
+	}
+}
+
+func TestClassifierResolve(t *testing.T) {
+	kubectl, err := Parse([]byte("match: { command: kubectl, aliases: [k] }\n"), "kubectl.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := NewRegistry()
+	reg.Add(kubectl)
+	for _, tt := range []struct {
+		aliases    Aliases
+		word, want string
+	}{
+		// k is matched by the spec's aliases before the wrapper.
+		{Aliases{"k": "kubecolor"}, "k", "kubectl"},
+		{Aliases{"k": "kubectl", "kubectl": "kubecolor"}, "k", "kubectl"},
+		{Aliases{"kubectl": "kubecolor"}, "kubectl", "kubectl"},
+		{Aliases{"k": "kubectl"}, "k", "kubectl"},
+		{nil, "k", "kubectl"},
+		{nil, "/usr/bin/kubectl", "kubectl"},
+		{Aliases{"g": "git"}, "g", "git"},
+		{nil, "mytool", "mytool"},
+	} {
+		c := Classifier{Specs: reg, Aliases: tt.aliases}
+		if got := c.Resolve(tt.word); got != tt.want {
+			t.Errorf("Resolve(%q) with %v = %s, want %s", tt.word, tt.aliases, got, tt.want)
+		}
+	}
+}
+
+func TestRegistryOverrideDropsAliases(t *testing.T) {
+	bundled, _ := Parse([]byte("match: { command: kubectl, aliases: [k] }\n"), "bundled.yaml")
+	user, _ := Parse([]byte("match: { command: kubectl }\n"), "user.yaml")
+	reg := NewRegistry()
+	reg.Add(bundled)
+	reg.Add(user)
+	if reg.Lookup("kubectl") != user {
+		t.Error("kubectl should use the user spec")
+	}
+	if reg.Lookup("k") != nil {
+		t.Error("k should no longer use the bundled spec")
+	}
+}
+
 func TestValidateComplete(t *testing.T) {
 	for _, tt := range []struct{ backend, err string }{
 		{"", ""},

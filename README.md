@@ -84,6 +84,23 @@ transforms:
   - { key: o, op: cycle, flag: output, desc: "cycle output" }
 ```
 
+Use `focus:` to choose which slot the editor starts on. It takes a positional name, `pos:N`, or a flag (`namespace`, `--namespace`, `-n`), or a list of these. The first one present in the command wins. Positionals declared in the plugin can always be focused, even before they're typed. Flags that aren't in the command are skipped. Without a match, rx starts on the first flag that takes a value.
+
+```yaml
+name: flux
+match: { command: flux }
+positionals:
+  - { index: 0, name: verb }
+  - { index: 1, name: kind }
+focus: kind          # `flux get kustomization` starts on "kustomization"
+```
+
+```yaml
+name: find
+match: { command: find }
+focus: [-name, -type] # `find . -name "*.txt" -type d` starts on "*.txt"
+```
+
 By default rx asks your shell for completions, or calls the command's own completion directly when it is built with cobra (like kubectl). Set `complete:` to `shell`, `cobra` or `none` to choose explicitly.
 
 Check your plugin with `rx plugins lint my-plugin.yaml`.

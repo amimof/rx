@@ -331,7 +331,7 @@ func cmdIndex(args []string) error {
 		}
 		return nil
 	}
-	name := e.aliases.Resolve(*show)
+	name := e.cls.Resolve(*show)
 	keys := fs.Args()
 	if len(keys) == 0 {
 		for k := range e.hist.Values[name] {
