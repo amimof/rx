@@ -1,0 +1,21 @@
+#!/bin/sh
+# Stands in for `rx edit` under the widget. Sends each line of $RX_SCRIPT as
+# a request and appends the responses (up to END) to $RX_OUT/resp.N.
+#   DIE          exit without sending anything (rx crashed)
+#   DIEAFTER X   send X, then exit without reading the response
+#   DONE/CANCEL/ERROR  sent, then exit
+printf '%s\n' "$*" > "$RX_OUT/args"
+n=0
+while IFS= read -r req <&3; do
+  case $req in
+    DIE) exit 1 ;;
+    DIEAFTER*) printf '%s\n' "${req#DIEAFTER }"; exit 1 ;;
+  esac
+  printf '%s\n' "$req"
+  case $req in DONE*|CANCEL|ERROR*) exit 0 ;; esac
+  n=$((n + 1))
+  while IFS= read -r l; do
+    printf '%s\n' "$l" >> "$RX_OUT/resp.$n"
+    [ "$l" = END ] && break
+  done
+done 3< "$RX_SCRIPT"

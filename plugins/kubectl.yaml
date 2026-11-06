@@ -1,0 +1,29 @@
+# Values come from kubectl's own cobra completion. This file only adds flag
+# grammar, mutually exclusive flags and transforms.
+name: kubectl
+match:
+  command: kubectl
+  aliases: [k]
+complete: cobra
+flags:
+  - { name: namespace, short: n, takes: value, mutex: [all-namespaces] }
+  - { name: all-namespaces, short: A, takes: none, mutex: [namespace] }
+  - { name: output, short: o, takes: value, values: [wide, yaml, json, name] }
+  - { name: selector, short: l, takes: value }
+  - { name: context, takes: value }
+  - { name: container, short: c, takes: value }
+  # -f is ambiguous (apply -f FILE vs logs -f) and flags are not yet scoped to
+  # subcommands, so its short form is left to history inference.
+  - { name: filename, takes: value }
+  - { name: follow, takes: none }
+  - { name: watch, short: w, takes: none }
+  - { name: tail, takes: value }
+positionals:
+  - { index: 0, name: verb, values: [get, describe, logs, edit, delete] }
+  - { index: 1, name: resource }
+  - { index: 2, name: name }
+transforms:
+  - { key: A, op: toggle, flag: all-namespaces, desc: "all namespaces" }
+  - { key: o, op: cycle, flag: output, desc: "cycle output" }
+  - { key: v, op: cycle, slot: verb, desc: "cycle verb" }
+  - { key: w, op: toggle, flag: watch, desc: "watch" }
