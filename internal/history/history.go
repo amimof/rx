@@ -1,4 +1,4 @@
-// Package history reads zsh history and indexes the values used for each
+// Package history reads shell history and indexes the values used for each
 // slot of each command.
 package history
 
@@ -28,6 +28,11 @@ type Entry struct {
 	Time int64
 	Cmd  string
 }
+
+// Reader parses a history file. Load indexes appended data by calling it on
+// the file from where the last read ended, so the format must be
+// append-only and a reader must accept starting at any entry boundary.
+type Reader func(io.Reader) ([]Entry, error)
 
 // meta is the zsh metafication marker: the following byte is xor 32.
 const meta = 0x83
@@ -267,11 +272,12 @@ func Frecency(st *Stat, now time.Time) float64 {
 // a history file that was rewritten rather than appended to.
 const tailLen = 256
 
-// Load returns the index for histfile using an on-disk cache in cacheDir.
-// The cache is keyed by histfile and salt (which should change whenever
-// specs or aliases change). When the file has only been appended to since
-// the cache was written, just the new entries are indexed.
-func Load(histfile, cacheDir, salt string, c spec.Classifier) (*Index, error) {
+// Load returns the index for histfile, parsed with read, using an on-disk
+// cache in cacheDir. The cache is keyed by histfile and salt (which should
+// change whenever specs, aliases or the reader change). When the file has
+// only been appended to since the cache was written, just the new entries
+// are indexed.
+func Load(histfile, cacheDir, salt string, read Reader, c spec.Classifier) (*Index, error) {
 	f, err := os.Open(histfile)
 	if err != nil {
 		return nil, err
@@ -300,7 +306,7 @@ func Load(histfile, cacheDir, salt string, c spec.Classifier) (*Index, error) {
 	if _, err := f.Seek(x.Size, io.SeekStart); err != nil {
 		return nil, err
 	}
-	entries, err := ReadZsh(f)
+	entries, err := read(f)
 	if err != nil {
 		return nil, err
 	}

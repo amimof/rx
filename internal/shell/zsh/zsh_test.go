@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/amimof/rx/internal/complete"
+	"github.com/amimof/rx/internal/shell/proto"
 )
 
 func TestScript(t *testing.T) {
@@ -16,10 +16,13 @@ func TestScript(t *testing.T) {
 	if !strings.HasPrefix(s, `typeset -g _rx_bin='/opt/it'\''s/rx'`) {
 		t.Fatalf("header = %q", strings.SplitN(s, "\n", 2)[0])
 	}
-	for _, want := range []string{"zle -N rx-edit", "zle -C _rx_capture", "coproc"} {
+	for _, want := range []string{"zle -N rx-edit", "zle -C _rx_capture", "mkfifo", "--shell zsh"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("script missing %q", want)
 		}
+	}
+	if strings.Contains(s, "coproc") {
+		t.Error("script uses coproc, which would replace the user's coprocess")
 	}
 }
 
@@ -53,6 +56,9 @@ _cobrafix() { local out=$(cobrafix __complete "${words[@]:1}") }
 compdef _cobrafix cobrafix
 
 export RX_OUT=%[1]s RX_SCRIPT=%[1]s/script RX_LOG=%[1]s/log
+# The fifo directory is created here, so tests can check it is cleaned up.
+export XDG_RUNTIME_DIR=%[1]s/run
+mkdir -p $XDG_RUNTIME_DIR
 typeset -g _rx_bin=%[2]s
 source %[3]s
 `
@@ -80,7 +86,7 @@ func newShell(t *testing.T, bin string) *shell {
 // fake returns a shell whose rx sends the given requests.
 func fake(t *testing.T, requests ...string) *shell {
 	t.Helper()
-	bin, _ := filepath.Abs("testdata/fake-rx")
+	bin, _ := filepath.Abs("../testdata/fake-rx")
 	s := newShell(t, bin)
 	s.write("script", strings.Join(requests, "\n")+"\n")
 	return s
@@ -112,6 +118,18 @@ func (s *shell) read(name string) string {
 	return string(b)
 }
 
+// checkCleanedUp fails if the widget left its fifo directory behind.
+func (s *shell) checkCleanedUp() {
+	s.t.Helper()
+	left, err := os.ReadDir(filepath.Join(s.dir, "run"))
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	for _, e := range left {
+		s.t.Errorf("left behind in XDG_RUNTIME_DIR: %s", e.Name())
+	}
+}
+
 func (s *shell) transcript() string {
 	b, _ := os.ReadFile(filepath.Join(s.dir, "transcript"))
 	return string(b)
@@ -140,7 +158,7 @@ func (s *shell) accept() []string {
 
 func req(fields ...string) string {
 	for i := range fields {
-		fields[i] = complete.Escape(fields[i])
+		fields[i] = proto.Escape(fields[i])
 	}
 	return strings.Join(fields, "\t")
 }
@@ -155,7 +173,7 @@ func TestWidgetProtocol(t *testing.T) {
 	)
 	s.run(append(typeAndEdit("fixture b"), s.accept()...)...)
 
-	if got := s.read("args"); got != "edit --cursor 9 -- fixture b\n" {
+	if got := s.read("args"); got != "edit --shell zsh --cursor 9 -- fixture b\n" {
 		t.Errorf("rx args = %q", got)
 	}
 	if got := s.read("resp.1"); got != "I\tfixture\t_fixture\t0\nEND\n" {
@@ -180,6 +198,17 @@ func TestWidgetProtocol(t *testing.T) {
 	if tr := s.transcript(); strings.Contains(tr, "done") {
 		t.Errorf("job notification leaked to the terminal:\n%q", tr)
 	}
+	s.checkCleanedUp()
+}
+
+// zsh has a single coprocess; the widget must not replace the user's.
+func TestWidgetKeepsUserCoproc(t *testing.T) {
+	s := fake(t, req("CANCEL"))
+	s.rc("coproc cat\nusecoproc() { print -p hello; local x; read -p x; ran $x }")
+	s.run(append(typeAndEdit("usecoproc"), "sleep:0.3", "key:\n", "file:"+filepath.Join(s.dir, "ran"))...)
+	if got := s.read("ran"); got != "hello\n" {
+		t.Errorf("ran %q", got)
+	}
 }
 
 func TestWidgetEscaping(t *testing.T) {
@@ -193,7 +222,7 @@ func TestWidgetEscaping(t *testing.T) {
 	s := fake(t, append(reqs, req("CANCEL"))...)
 	s.run(append(typeAndEdit("echofix"), "file:"+filepath.Join(s.dir, fmt.Sprintf("resp.%d", len(vals))), "sleep:0.2")...)
 	for i, v := range vals {
-		want := fmt.Sprintf("C\t%s\t", complete.Escape(v))
+		want := fmt.Sprintf("C\t%s\t", proto.Escape(v))
 		if got := s.read(fmt.Sprintf("resp.%d", i+1)); !strings.HasPrefix(got, want) {
 			t.Errorf("value %q: response %q, want prefix %q", v, got, want)
 		}
@@ -239,6 +268,7 @@ func TestWidgetRestoresBuffer(t *testing.T) {
 			if tr := s.transcript(); strings.Contains(tr, "broken pipe") || strings.Contains(tr, "done") {
 				t.Errorf("noise on terminal:\n%q", tr)
 			}
+			s.checkCleanedUp()
 		})
 	}
 }
@@ -288,19 +318,20 @@ func TestWidgetErrorMessages(t *testing.T) {
 		name   string
 		script []string
 		line   string
-		bin    string
+		rc     string
 		want   string
 	}{
 		{"rx error", []string{req("ERROR", "boom: no such thing")}, "fixture b", "", "rx: boom: no such thing"},
 		{"rx crash", []string{"DIE"}, "fixture b", "", "rx: exited unexpectedly"},
 		{"empty prompt", nil, "", "", "rx: nothing to edit"},
-		{"missing binary", nil, "fixture b", "/nonexistent/rx", "rx: binary not found: /nonexistent/rx"},
+		{"missing binary", nil, "fixture b", "_rx_bin=/nonexistent/rx", "rx: binary not found: /nonexistent/rx"},
+		{"no temp dir", nil, "fixture b", "XDG_RUNTIME_DIR=/nonexistent", "rx: cannot create a temporary directory"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := fake(t, tt.script...)
-			if tt.bin != "" {
-				s.rc("_rx_bin=" + tt.bin)
+			if tt.rc != "" {
+				s.rc(tt.rc)
 			}
 			s.run(append(typeAndEdit(tt.line), "expect:"+tt.want, "key:\n")...)
 		})

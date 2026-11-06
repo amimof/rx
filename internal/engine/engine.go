@@ -12,10 +12,17 @@ import (
 	"github.com/amimof/rx/internal/complete"
 	"github.com/amimof/rx/internal/complete/cobra"
 	"github.com/amimof/rx/internal/complete/provider"
-	"github.com/amimof/rx/internal/complete/zsh"
 	"github.com/amimof/rx/internal/model"
+	"github.com/amimof/rx/internal/shell/proto"
 	"github.com/amimof/rx/internal/spec"
 )
+
+// Shell is the live shell rx runs under. It completes command lines and
+// describes command words; Name identifies it as a completion source.
+type Shell interface {
+	complete.Backend
+	Info(ctx context.Context, word string) (proto.Info, error)
+}
 
 // Update is a batch of candidates delivered to the editor.
 type Update struct {
@@ -33,25 +40,25 @@ type Update struct {
 
 // Engine runs completions.
 type Engine struct {
-	Zsh     *zsh.Client // nil when not running under the zsh widget
+	Shell   Shell // nil when not running under a shell widget
 	Cache   *complete.Cache
 	Timeout time.Duration
 	TTL     time.Duration
 
 	cobra    cobra.Backend
 	mu       sync.Mutex
-	infos    map[string]zsh.Info
+	infos    map[string]proto.Info
 	disabled map[string]bool // cobra unsupported, by command
 }
 
-// New returns an engine with defaults.
-func New(z *zsh.Client, cache *complete.Cache) *Engine {
+// New returns an engine with defaults. sh may be nil.
+func New(sh Shell, cache *complete.Cache) *Engine {
 	return &Engine{
-		Zsh: z, Cache: cache,
+		Shell: sh, Cache: cache,
 		Timeout:  2 * time.Second,
 		TTL:      30 * time.Second,
 		cobra:    cobra.Backend{Env: os.Environ()},
-		infos:    map[string]zsh.Info{},
+		infos:    map[string]proto.Info{},
 		disabled: map[string]bool{},
 	}
 }
@@ -170,12 +177,12 @@ func providerFor(sp *spec.Spec, s model.Slot) string {
 
 // backendFor resolves the backend for a command: the spec's explicit choice,
 // or in auto mode cobra if the shell's completion function for it is
-// cobra-generated, otherwise zsh. Unknown binaries are never probed with
-// __complete.
+// cobra-generated, otherwise the shell. Unknown binaries are never probed
+// with __complete.
 func (e *Engine) backendFor(ctx context.Context, head, name string, sp *spec.Spec) complete.Backend {
-	var zb complete.Backend
-	if e.Zsh != nil {
-		zb = &zsh.Backend{Client: e.Zsh}
+	var sb complete.Backend
+	if e.Shell != nil {
+		sb = e.Shell
 	}
 	e.mu.Lock()
 	disabled := e.disabled[name]
@@ -185,13 +192,13 @@ func (e *Engine) backendFor(ctx context.Context, head, name string, sp *spec.Spe
 		return nil
 	case spec.CompleteCobra:
 		if disabled {
-			return zb
+			return sb
 		}
 		return &e.cobra
-	case spec.CompleteZsh:
-		return zb
+	case spec.CompleteShell:
+		return sb
 	}
-	if e.Zsh == nil {
+	if e.Shell == nil {
 		return nil
 	}
 	e.mu.Lock()
@@ -201,8 +208,8 @@ func (e *Engine) backendFor(ctx context.Context, head, name string, sp *spec.Spe
 		ictx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 		defer cancel()
 		var err error
-		if info, err = e.Zsh.Info(ictx, head); err != nil {
-			return zb
+		if info, err = e.Shell.Info(ictx, head); err != nil {
+			return sb
 		}
 		e.mu.Lock()
 		e.infos[head] = info
@@ -211,5 +218,5 @@ func (e *Engine) backendFor(ctx context.Context, head, name string, sp *spec.Spe
 	if info.Cobra && !disabled {
 		return &e.cobra
 	}
-	return zb
+	return sb
 }

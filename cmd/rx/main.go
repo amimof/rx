@@ -15,14 +15,13 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/amimof/rx/internal/complete"
-	"github.com/amimof/rx/internal/complete/zsh"
 	"github.com/amimof/rx/internal/engine"
 	"github.com/amimof/rx/internal/history"
 	"github.com/amimof/rx/internal/parse"
-	zshinit "github.com/amimof/rx/internal/shell/zsh"
+	"github.com/amimof/rx/internal/shell"
+	"github.com/amimof/rx/internal/shell/proto"
 	"github.com/amimof/rx/internal/spec"
 	"github.com/amimof/rx/internal/tui"
 	"github.com/amimof/rx/plugins"
@@ -31,19 +30,33 @@ import (
 const usage = `rx - edit shell commands as slots
 
 Usage:
-  rx init zsh                       print the zsh widget (eval "$(rx init zsh)")
-  rx edit [--cursor N] -- BUFFER    open the slot editor (normally run by the widget)
-  rx index [--show CMD [SLOT]]      build the history index and show candidates
-  rx complete [--slot KEY] -- CMD   print completions for a slot (debugging)
+  rx init SHELL                     print the shell widget (zsh: eval "$(rx init zsh)")
+  rx edit [--shell SHELL] [--cursor N] -- BUFFER
+                                    open the slot editor; --shell is set by the
+                                    widget and makes rx talk to it on stdin/stdout
+  rx index [--shell SHELL] [--show CMD [SLOT]]
+                                    build the history index and show candidates
+  rx complete [--shell SHELL] [--slot KEY] -- CMD
+                                    print completions for a slot (debugging)
   rx plugins list                   list loaded plugins
   rx plugins lint [FILE...]         validate plugin files
-  rx doctor                         check the setup (in zsh, run rx-doctor for
+  rx doctor [--shell SHELL]         check the setup (in zsh, run rx-doctor for
                                     key bindings too)
+
+SHELL is one of: %s. Without --shell, the basename of $SHELL is used if
+supported, otherwise %s.
 `
+
+func printUsage(w *os.File) {
+	fmt.Fprintf(w, usage, strings.Join(shell.Names(), ", "), shell.Default)
+}
+
+// widget is set when rx runs under a shell widget, whose stderr is the log.
+var widget bool
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprint(os.Stderr, usage)
+		printUsage(os.Stderr)
 		os.Exit(2)
 	}
 	var err error
@@ -60,11 +73,11 @@ func main() {
 	case "plugins":
 		err = cmdPlugins(args)
 	case "doctor":
-		err = cmdDoctor()
+		err = cmdDoctor(args)
 	case "-h", "--help", "help":
-		fmt.Print(usage)
+		printUsage(os.Stdout)
 	default:
-		fmt.Fprint(os.Stderr, usage)
+		printUsage(os.Stderr)
 		os.Exit(2)
 	}
 	if errors.Is(err, errCancelled) {
@@ -72,7 +85,7 @@ func main() {
 	}
 	if err != nil {
 		// Under the widget stderr is the log file, so stamp the line.
-		if os.Getenv("RX_COPROC") == "1" {
+		if widget {
 			fmt.Fprint(os.Stderr, time.Now().Format(time.RFC3339), " ")
 		}
 		fmt.Fprintln(os.Stderr, "rx:", err)
@@ -83,19 +96,29 @@ func main() {
 var errCancelled = errors.New("cancelled")
 
 func cmdInit(args []string) error {
-	if len(args) != 1 || args[0] != "zsh" {
-		return errors.New("usage: rx init zsh")
+	if len(args) != 1 {
+		return fmt.Errorf("usage: rx init %s", strings.Join(shell.Names(), "|"))
+	}
+	sh, ok := shell.Lookup(args[0])
+	if !ok {
+		return fmt.Errorf("unsupported shell %q (supported: %s)", args[0], strings.Join(shell.Names(), ", "))
 	}
 	bin, err := os.Executable()
 	if err != nil {
 		bin = "rx"
 	}
-	fmt.Print(zshinit.Script(bin))
+	fmt.Print(sh.Script(bin))
 	return nil
+}
+
+// shellFlag registers --shell on fs.
+func shellFlag(fs *flag.FlagSet) *string {
+	return fs.String("shell", "", "shell rx runs under: "+strings.Join(shell.Names(), ", "))
 }
 
 // env holds everything loaded at startup.
 type env struct {
+	sh      *shell.Shell
 	reg     *spec.Registry
 	aliases spec.Aliases
 	hist    *history.Index
@@ -120,21 +143,20 @@ func cacheDir() string {
 	return ""
 }
 
-func histFile() string {
+func histFile(sh *shell.Shell) string {
 	for _, v := range []string{"RX_HISTFILE", "HISTFILE"} {
 		if f := os.Getenv(v); f != "" {
 			return f
 		}
 	}
-	h, _ := os.UserHomeDir()
-	return filepath.Join(h, ".zsh_history")
+	return sh.HistFile()
 }
 
 // parseAliases decodes RX_ALIASES: escaped "name=value" lines.
 func parseAliases(s string) spec.Aliases {
 	a := spec.Aliases{}
 	for _, l := range strings.Split(s, "\n") {
-		if k, v, ok := strings.Cut(complete.Unescape(l), "="); ok && k != "" {
+		if k, v, ok := strings.Cut(proto.Unescape(l), "="); ok && k != "" {
 			a[k] = v
 		}
 	}
@@ -152,15 +174,15 @@ func loadRegistry() (*spec.Registry, error) {
 	return reg, nil
 }
 
-func loadEnv(withHistory bool) (*env, error) {
+func loadEnv(sh *shell.Shell, withHistory bool) (*env, error) {
 	reg, err := loadRegistry()
 	if err != nil {
 		return nil, err
 	}
-	e := &env{reg: reg, aliases: parseAliases(os.Getenv("RX_ALIASES"))}
+	e := &env{sh: sh, reg: reg, aliases: parseAliases(os.Getenv("RX_ALIASES"))}
 	e.cls = &spec.Classifier{Specs: reg, Aliases: e.aliases}
 	if withHistory {
-		x, err := history.Load(histFile(), cacheDir(), e.salt(), *e.cls)
+		x, err := history.Load(histFile(sh), cacheDir(), e.salt(), sh.ReadHistory, *e.cls)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			fmt.Fprintln(os.Stderr, "rx: history:", err)
 		}
@@ -172,37 +194,34 @@ func loadEnv(withHistory bool) (*env, error) {
 	return e, nil
 }
 
-// salt changes whenever specs or aliases change, invalidating the history
-// index, since both affect how history lines are classified.
+// salt changes whenever specs, aliases or the shell (and so the history
+// format) change, invalidating the history index, since all of them affect
+// how history lines are read and classified.
 func (e *env) salt() string {
 	data, _ := json.Marshal(struct {
-		S []*spec.Spec
-		A spec.Aliases
-	}{e.reg.Specs(), e.aliases})
+		Shell string
+		S     []*spec.Spec
+		A     spec.Aliases
+	}{e.sh.Name, e.reg.Specs(), e.aliases})
 	h := sha256.Sum256(data)
 	return hex.EncodeToString(h[:])
 }
 
-func runeToByte(s string, runes int) int {
-	b := 0
-	for i := 0; i < runes && b < len(s); i++ {
-		_, n := utf8.DecodeRuneInString(s[b:])
-		b += n
-	}
-	return b
-}
-
 func cmdEdit(args []string) error {
 	fs := flag.NewFlagSet("edit", flag.ContinueOnError)
-	cursor := fs.Int("cursor", -1, "cursor position in characters (default: end)")
+	shellName := shellFlag(fs)
+	cursor := fs.Int("cursor", -1, "cursor position in the shell's unit (default: end)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	buf := strings.Join(fs.Args(), " ")
 
-	var client *zsh.Client
-	if os.Getenv("RX_COPROC") == "1" {
-		client = zsh.NewClient(os.Stdin, os.Stdout)
+	// With --shell, rx was started by the widget and talks to it on stdin
+	// and stdout.
+	var client *proto.Client
+	if *shellName != "" {
+		widget = true
+		client = proto.NewClient(*shellName, os.Stdin, os.Stdout)
 	}
 	cancel := func() error {
 		if client != nil {
@@ -218,10 +237,14 @@ func cmdEdit(args []string) error {
 		}
 		return err
 	}
+	sh, err := shell.Resolve(*shellName)
+	if err != nil {
+		return fail(err)
+	}
 
 	pos := len(buf)
 	if *cursor >= 0 {
-		pos = runeToByte(buf, *cursor)
+		pos = sh.ToByte(buf, *cursor)
 	}
 	line := parse.Parse(buf)
 	seg := line.SegmentAt(pos)
@@ -229,7 +252,7 @@ func cmdEdit(args []string) error {
 		return fail(errors.New("nothing to edit"))
 	}
 
-	e, err := loadEnv(true)
+	e, err := loadEnv(sh, true)
 	if err != nil {
 		return fail(err)
 	}
@@ -242,7 +265,13 @@ func cmdEdit(args []string) error {
 	}
 	defer tty.Close()
 
-	eng := engine.New(client, &complete.Cache{Dir: filepath.Join(cacheDir(), "complete")})
+	// Only a non-nil client may become the engine's Shell: a nil
+	// *proto.Client in the interface would not compare equal to nil.
+	var live engine.Shell
+	if client != nil {
+		live = client
+	}
+	eng := engine.New(live, &complete.Cache{Dir: filepath.Join(cacheDir(), "complete")})
 	out, err := tui.Run(tui.Options{Cmd: cmd, Spec: sp, History: e.hist, Engine: eng, Infer: e.hist, TTY: tty})
 	if err != nil {
 		return fail(fmt.Errorf("editor: %w", err))
@@ -252,7 +281,7 @@ func cmdEdit(args []string) error {
 	}
 	rendered := out.Cmd.Render()
 	result := line.Splice(seg, rendered)
-	end := utf8.RuneCountInString(result[:line.Segments[seg].Start+len(rendered)])
+	end := sh.FromByte(result, line.Segments[seg].Start+len(rendered))
 	if client != nil {
 		return client.Done(result, end)
 	}
@@ -262,19 +291,24 @@ func cmdEdit(args []string) error {
 
 func cmdIndex(args []string) error {
 	fs := flag.NewFlagSet("index", flag.ContinueOnError)
+	shellName := shellFlag(fs)
 	show := fs.String("show", "", "command to show candidates for")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	sh, err := shell.Resolve(*shellName)
+	if err != nil {
+		return err
+	}
 	start := time.Now()
-	e, err := loadEnv(true)
+	e, err := loadEnv(sh, true)
 	if err != nil {
 		return err
 	}
 	if e.hist == nil {
-		return fmt.Errorf("no history at %s", histFile())
+		return fmt.Errorf("no history at %s", histFile(sh))
 	}
-	fmt.Printf("indexed %s (%d bytes) in %v\n", histFile(), e.hist.Size, time.Since(start).Round(time.Millisecond))
+	fmt.Printf("indexed %s (%d bytes) in %v\n", histFile(sh), e.hist.Size, time.Since(start).Round(time.Millisecond))
 	if *show == "" {
 		type kv struct {
 			k string
@@ -319,11 +353,16 @@ func cmdIndex(args []string) error {
 
 func cmdComplete(args []string) error {
 	fs := flag.NewFlagSet("complete", flag.ContinueOnError)
+	shellName := shellFlag(fs)
 	slot := fs.String("slot", "", "slot key to complete (default: last slot; \"-\" for flags)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	e, err := loadEnv(true)
+	sh, err := shell.Resolve(*shellName)
+	if err != nil {
+		return err
+	}
+	e, err := loadEnv(sh, true)
 	if err != nil {
 		return err
 	}
@@ -368,7 +407,12 @@ func cmdComplete(args []string) error {
 	return nil
 }
 
-func cmdDoctor() error {
+func cmdDoctor(args []string) error {
+	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	shellName := shellFlag(fs)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 	problems := 0
 	check := func(name, value string, err error) {
 		status := "ok "
@@ -382,8 +426,13 @@ func cmdDoctor() error {
 	bin, err := os.Executable()
 	check("binary", bin, err)
 
-	_, err = exec.LookPath("zsh")
-	check("zsh", "on PATH", err)
+	sh, err := shell.Resolve(*shellName)
+	if err != nil {
+		check("shell", *shellName, err)
+		return fmt.Errorf("%d problem(s)", problems)
+	}
+	_, err = exec.LookPath(sh.Name)
+	check("shell", sh.Name+" on PATH", err)
 
 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 	if err == nil {
@@ -405,12 +454,12 @@ func cmdDoctor() error {
 		check("plugins", "", err)
 	}
 
-	hf := histFile()
+	hf := histFile(sh)
 	if fi, err := os.Stat(hf); err != nil {
 		fmt.Printf("  [-- ] %-11s %s: %v (no history candidates)\n", "history", hf, err)
 	} else {
 		start := time.Now()
-		e, err := loadEnv(true)
+		e, err := loadEnv(sh, true)
 		if err == nil && e.hist == nil {
 			err = errors.New("could not be indexed")
 		}

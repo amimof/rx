@@ -1,5 +1,6 @@
 #!/bin/sh
-# Stands in for `rx edit` under the widget. Sends each line of $RX_SCRIPT as
+# Stands in for `rx edit` under a shell widget, for every shell's widget
+# tests. Sends each line of $RX_SCRIPT as
 # a request and appends the responses (up to END) to $RX_OUT/resp.N.
 #   DIE          exit without sending anything (rx crashed)
 #   DIEAFTER X   send X, then exit without reading the response
