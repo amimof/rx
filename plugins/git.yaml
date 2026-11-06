@@ -1,0 +1,11 @@
+# Values come from zsh's git completion. This file only tells rx that -m
+# takes a message, so `git commit -m "..."` and `git tag -m "..."` edit the
+# message as one slot. Flags are not yet scoped to subcommands; `git branch
+# -m old new` is the exception where -m doesn't take a message.
+name: git
+match:
+  command: git
+flags:
+  - { name: message, short: m, takes: value }
+positionals:
+  - { index: 0, name: subcommand }

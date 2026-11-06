@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -157,6 +158,44 @@ func TestCancelKeepsSource(t *testing.T) {
 	// Placeholders for missing positionals must not change the output.
 	if got := h.m.cmd.Render(); got != "k  get pods   -n monitoring" {
 		t.Fatalf("render = %q", got)
+	}
+}
+
+// TestProgramTabThroughSlots runs a real bubbletea program, where engine
+// updates go through the program's unbuffered message channel. Tabbing onto
+// value-less flags used to deadlock the event loop.
+func TestProgramTabThroughSlots(t *testing.T) {
+	line := `tool tag -a "0.0.0" -m "0.0.0"`
+	c := spec.Classifier{Specs: spec.NewRegistry()}
+	cmd := c.Classify(parse.Parse(line), 0)
+	in, w := io.Pipe()
+	type result struct {
+		out Outcome
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		out, err := run(Options{Cmd: cmd, Engine: engine.New(nil, nil)}, in, io.Discard)
+		done <- result{out, err}
+	}()
+	go func() {
+		// Twice around all slots, including "+ flag", then accept.
+		for range 2 * (len(cmd.Slots) + 1) {
+			w.Write([]byte("\t"))
+			time.Sleep(20 * time.Millisecond)
+		}
+		w.Write([]byte("\r"))
+	}()
+	select {
+	case r := <-done:
+		if r.err != nil {
+			t.Fatal(r.err)
+		}
+		if r.out.Cancelled || r.out.Cmd.Render() != line {
+			t.Fatalf("outcome = %+v, render %q", r.out, r.out.Cmd.Render())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("editor froze while tabbing through slots")
 	}
 }
 

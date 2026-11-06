@@ -4,6 +4,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -40,9 +41,13 @@ type Outcome struct {
 
 // Run runs the editor on the terminal until the user accepts or cancels.
 func Run(o Options) (Outcome, error) {
-	r := lipgloss.NewRenderer(o.TTY)
+	return run(o, o.TTY, o.TTY)
+}
+
+func run(o Options, in io.Reader, out io.Writer) (Outcome, error) {
+	r := lipgloss.NewRenderer(out)
 	m := newModel(o, newStyles(r))
-	p := tea.NewProgram(m, tea.WithInput(o.TTY), tea.WithOutput(o.TTY))
+	p := tea.NewProgram(m, tea.WithInput(in), tea.WithOutput(out))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	m.ctx = ctx
