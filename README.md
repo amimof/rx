@@ -54,15 +54,44 @@ rx-doctor
 | `Tab` / `Shift+Tab` | Next / previous slot |
 | Type | Fuzzy-search values for the slot |
 | `↑` `↓` | Pick a value |
+| `Ctrl+N` / `Ctrl+P` | Same as `↓` / `↑` |
 | `Enter` | Put the command back in the prompt |
+| `Ctrl+E` | Put the command back in the prompt and run it |
 | `Ctrl+S` | Cycle the suggestion source: all, history, spec, provider, cobra, shell |
 | `Ctrl+D` | Remove the current slot |
+| `Ctrl+U` / `Ctrl+W` | Clear the search |
 | `Esc` | Clear the search, press again to cancel |
+| `Ctrl+C` | Cancel |
 | `Alt+<key>` | Plugin shortcuts, e.g. `Alt+A` toggles `--all-namespaces` for kubectl |
 
-The last slot, **+ flag**, lets you add a new flag.
+The last slot, **+ flag**, lets you add a new flag. All of these keys except plugin shortcuts can be changed in the [config file](#configuration).
 
-To use a different key than Ctrl-X Ctrl-X, set `RX_KEY` before the `eval` line, or call `rx-bind` after it. The default replaces zsh's `exchange-point-and-mark` binding in emacs mode; pick another key if you use it.
+## Configuration
+
+rx reads `~/.config/rx/config.yaml` (or `$XDG_CONFIG_HOME/rx/config.yaml`, or the file given with `--config`). Every setting is optional:
+
+```yaml
+key: "^X^X"                # key that opens rx, in zsh bindkey syntax
+log: ~/.cache/rx/rx.log    # widget log file
+keys:                      # editor keys; a list replaces that action's defaults
+  accept:    [enter]
+  run:       [ctrl+e]       # accept, then run the command
+  cancel:    [ctrl+c]
+  back:      [esc]         # clear the search, press again to cancel
+  up:        [up, ctrl+p]
+  down:      [down, ctrl+n]
+  next-slot: [tab]
+  prev-slot: [shift+tab]
+  source:    [ctrl+s]
+  drop:      [ctrl+d]
+  clear:     [ctrl+u, ctrl+w]
+```
+
+Keys are named like `ctrl+e`, `alt+y`, `shift+tab`, `enter`, `esc`, `up`. An empty list (`drop: []`) unbinds an action. Single characters and space can't be bound, since they type into the search. Run `rx doctor` to check the file.
+
+Environment variables override the file: `RX_KEY`, `RX_LOG`, and `RX_KEYS_<ACTION>` with a comma-separated list, e.g. `RX_KEYS_NEXT_SLOT=tab,ctrl+f`.
+
+`key` and `log` are baked into the widget by `rx init zsh`, so changes take effect in new shells. To use a different key than Ctrl-X Ctrl-X without the config file, set `RX_KEY` before the `eval` line, or call `rx-bind` after it. The default replaces zsh's `exchange-point-and-mark` binding in emacs mode; pick another key if you use it.
 
 ```zsh
 RX_KEY='^[r'     # Alt+r

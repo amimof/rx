@@ -167,7 +167,7 @@ rx-edit() {
     zle -M "rx: binary not found: $_rx_bin"
     return 1
   fi
-  local log=${RX_LOG:-${XDG_CACHE_HOME:-$HOME/.cache}/rx/rx.log}
+  local log=${RX_LOG:-${_rx_log:-${XDG_CACHE_HOME:-$HOME/.cache}/rx/rx.log}}
   [[ -d ${log:h} ]] || mkdir -p ${log:h} 2>/dev/null
   local orig_buf=$BUFFER orig_cur=$CURSOR
   local -a al
@@ -179,7 +179,7 @@ rx-edit() {
   local -x RX_ALIASES=${(pj:\n:)al}
   local -x RX_HISTFILE=${HISTFILE:-$HOME/.zsh_history}
 
-  local req done=0 ended=0 err= d= r=
+  local req done=0 ended=0 run=0 err= d= r=
   local -a f
   _rx_w=
   zle -I
@@ -207,6 +207,7 @@ rx-edit() {
             _rx_unesc "$f[3]"
             BUFFER=$REPLY
             CURSOR=$f[2]
+            [[ $f[4] == run ]] && run=1
             done=1 ended=1
             break ;;
           (CANCEL) ended=1; break ;;
@@ -227,6 +228,9 @@ rx-edit() {
   (( ended )) || err="exited unexpectedly (see $log)"
   zle reset-prompt
   [[ -n $err ]] && zle -M "rx: $err"
+  # Run the command as if Enter was pressed, so it lands in history and
+  # preexec hooks fire.
+  (( run )) && zle accept-line
   return 0
 }
 zle -N rx-edit
@@ -234,7 +238,7 @@ zle -N rx-edit
 # rx-bind [key]: bind rx-edit in the emacs, viins and vicmd keymaps. Call it
 # again after plugins that reset keymaps (e.g. zsh-vi-mode) have loaded.
 rx-bind() {
-  local key=${1:-${RX_KEY:-^X^X}} km
+  local key=${1:-${RX_KEY:-${_rx_key:-^X^X}}} km
   for km in emacs viins vicmd; do
     bindkey -M $km "$key" rx-edit
   done
@@ -251,7 +255,7 @@ rx-doctor() {
     b=$(bindkey -M $km | grep -F ' rx-edit')
     print -r -- "  $km${(l:13-$#km:: :)}${b:-(not bound)}"
   done
-  print -r -- "  log          ${RX_LOG:-${XDG_CACHE_HOME:-$HOME/.cache}/rx/rx.log}"
+  print -r -- "  log          ${RX_LOG:-${_rx_log:-${XDG_CACHE_HOME:-$HOME/.cache}/rx/rx.log}}"
 }
 
 rx-bind

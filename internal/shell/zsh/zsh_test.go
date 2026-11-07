@@ -12,9 +12,12 @@ import (
 )
 
 func TestScript(t *testing.T) {
-	s := Script("/opt/it's/rx")
-	if !strings.HasPrefix(s, `typeset -g _rx_bin='/opt/it'\''s/rx'`) {
-		t.Fatalf("header = %q", strings.SplitN(s, "\n", 2)[0])
+	s := Script(Options{Bin: "/opt/it's/rx", Key: "^[e", Log: "/tmp/rx.log"})
+	if want := "typeset -g _rx_bin='/opt/it'\\''s/rx'\ntypeset -g _rx_key='^[e'\ntypeset -g _rx_log='/tmp/rx.log'\n"; !strings.HasPrefix(s, want) {
+		t.Fatalf("header = %q", strings.Join(strings.SplitN(s, "\n", 4)[:3], "\n"))
+	}
+	if s := Script(Options{Bin: "rx"}); strings.Contains(s, "typeset -g _rx_key=") {
+		t.Error("no key should leave the widget's default")
 	}
 	for _, want := range []string{"zle -N rx-edit", "zle -C _rx_capture", "mkfifo", "--shell zsh"} {
 		if !strings.Contains(s, want) {
@@ -201,6 +204,23 @@ func TestWidgetProtocol(t *testing.T) {
 	s.checkCleanedUp()
 }
 
+// DONE with the run field runs the command without Enter being pressed;
+// without it the command only goes back into the prompt.
+func TestWidgetRun(t *testing.T) {
+	s := fake(t, req("DONE", "13", "fixture alpha", "run"))
+	s.run(append(typeAndEdit("fixture b"), "file:"+filepath.Join(s.dir, "ran"))...)
+	if got := s.read("ran"); got != "fixture alpha\n" {
+		t.Errorf("ran %q", got)
+	}
+	s.checkCleanedUp()
+
+	s = fake(t, req("DONE", "13", "fixture alpha"))
+	s.run(append(typeAndEdit("fixture b"), "sleep:0.5")...)
+	if _, err := os.Stat(filepath.Join(s.dir, "ran")); err == nil {
+		t.Errorf("plain DONE ran the command: %q", s.read("ran"))
+	}
+}
+
 // zsh has a single coprocess; the widget must not replace the user's.
 func TestWidgetKeepsUserCoproc(t *testing.T) {
 	s := fake(t, req("CANCEL"))
@@ -280,6 +300,9 @@ func TestWidgetKeymaps(t *testing.T) {
 		"vi insert":   "bindkey -v",
 		"vi command":  "bindkey -v",
 		"rx-bind key": "bindkey -e; rx-bind '^Xr'",
+		// rx init bakes the config's key into _rx_key; RX_KEY overrides it.
+		"config key":  "bindkey -e; _rx_key='^Xr'; rx-bind",
+		"RX_KEY wins": "bindkey -e; _rx_key='^Xe'; RX_KEY='^Xr'; rx-bind",
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := fake(t, req("DONE", "13", "fixture alpha"))
@@ -288,7 +311,7 @@ func TestWidgetKeymaps(t *testing.T) {
 			switch name {
 			case "vi command":
 				steps = append(steps, "key:\x1b", "sleep:0.4", "key:\x18\x18")
-			case "rx-bind key":
+			case "rx-bind key", "config key", "RX_KEY wins":
 				steps = append(steps, "key:\x18r")
 			default:
 				steps = append(steps, "key:\x18\x18")
