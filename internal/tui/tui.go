@@ -3,6 +3,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -108,11 +109,20 @@ type Model struct {
 	message string
 	errText string
 
+	// cycle is a cycle transform waiting for candidates to fill its values.
+	cycle *pendingCycle
+
 	ctx       context.Context
 	send      func(engine.Update)
 	width     int
 	cancelled bool
 	quitting  bool
+}
+
+type pendingCycle struct {
+	id    uint64 // request whose completion fills the values
+	key   string
+	added bool // the slot was added to fetch values for it
 }
 
 func newModel(o Options, st styles) *Model {
@@ -261,23 +271,7 @@ func (m *Model) merge(value, desc, source string, hist float64, order int) {
 // Without a query, rows are ordered by history frecency, then completion
 // order. With a query, by fuzzy score boosted by frecency.
 func (m *Model) filter() {
-	all := make([]row, 0, len(m.cands))
-	for _, r := range m.cands {
-		all = append(all, *r)
-	}
-	sort.SliceStable(all, func(i, j int) bool {
-		a, b := all[i], all[j]
-		if (a.hist > 0) != (b.hist > 0) {
-			return a.hist > 0
-		}
-		if a.hist != b.hist {
-			return a.hist > b.hist
-		}
-		if a.order != b.order {
-			return a.order < b.order
-		}
-		return a.value < b.value
-	})
+	all := m.ranked()
 	if m.query == "" {
 		m.rows = all
 		if m.sel >= len(m.rows) {
@@ -311,6 +305,29 @@ func (m *Model) filter() {
 		m.rows = append(m.rows, row{value: m.query, literal: true})
 	}
 	m.sel = 0
+}
+
+// ranked returns the candidates ordered by history frecency, then
+// completion order.
+func (m *Model) ranked() []row {
+	all := make([]row, 0, len(m.cands))
+	for _, r := range m.cands {
+		all = append(all, *r)
+	}
+	sort.SliceStable(all, func(i, j int) bool {
+		a, b := all[i], all[j]
+		if (a.hist > 0) != (b.hist > 0) {
+			return a.hist > 0
+		}
+		if a.hist != b.hist {
+			return a.hist > b.hist
+		}
+		if a.order != b.order {
+			return a.order < b.order
+		}
+		return a.value < b.value
+	})
+	return all
 }
 
 // Update handles input and completion results.
@@ -347,6 +364,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.query == "" {
 			m.sel = min(keepSel, len(m.rows)-1)
 		}
+		if msg.Done && m.cycle != nil && m.cycle.id == msg.ID {
+			m.finishCycle()
+		}
 	case tea.KeyMsg:
 		return m.key(msg)
 	}
@@ -357,7 +377,12 @@ func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if k.Alt && k.Type == tea.KeyRunes && m.sp != nil {
 		for _, t := range m.sp.Transforms {
 			if t.Key == string(k.Runes) {
-				if err := transform.Apply(m.cmd, m.sp, t); err != nil {
+				err := transform.Apply(m.cmd, m.sp, t)
+				if errors.Is(err, transform.ErrNoValues) {
+					m.autoCycle(t.Target())
+					return m, nil
+				}
+				if err != nil {
 					m.errText = err.Error()
 					return m, nil
 				}
@@ -430,6 +455,61 @@ func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// autoCycle cycles the slot with key through the candidates the editor would
+// list for it, for cycle transforms without values. The slot is focused so
+// its candidates load; the cycle completes once they have.
+func (m *Model) autoCycle(key string) {
+	i := m.cmd.Find(key)
+	added := false
+	if i < 0 {
+		s, err := transform.NewSlot(m.cmd, m.sp, key)
+		if err != nil {
+			m.errText = err.Error()
+			return
+		}
+		i, added = m.cmd.Add(s), true
+	}
+	// An added slot may land on the focused index (the "+ flag" slot), whose
+	// candidates are flag names, so it always needs a fresh load.
+	if i == m.focus && !added && !m.loading {
+		m.cycle = &pendingCycle{id: m.reqID, key: key}
+		m.finishCycle()
+		return
+	}
+	if i != m.focus || added {
+		m.focus = i
+		m.refocus()
+	}
+	m.cycle = &pendingCycle{id: m.reqID, key: key, added: added}
+}
+
+// finishCycle applies the pending cycle using the focused slot's
+// candidates.
+func (m *Model) finishCycle() {
+	c := m.cycle
+	m.cycle = nil
+	var values []string
+	for _, r := range m.ranked() {
+		values = append(values, r.value)
+	}
+	if len(values) == 0 {
+		if i := m.cmd.Find(c.key); c.added && i >= 0 && m.cmd.Slots[i].Value == "" {
+			m.cmd.Remove(i)
+			m.focus = min(m.focus, len(m.cmd.Slots))
+		}
+		m.errText = fmt.Sprintf("%v for %q", transform.ErrNoValues, c.key)
+		return
+	}
+	if err := transform.Cycle(m.cmd, m.sp, c.key, values); err != nil {
+		m.errText = err.Error()
+		return
+	}
+	if i := m.cmd.Find(c.key); i >= 0 {
+		m.focus = i
+	}
+	m.refocus()
 }
 
 // commit applies the selected row to the focused slot. It reports whether a

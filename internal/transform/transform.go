@@ -3,6 +3,7 @@
 package transform
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -10,6 +11,10 @@ import (
 	"github.com/amimof/rx/internal/model"
 	"github.com/amimof/rx/internal/spec"
 )
+
+// ErrNoValues is returned by Cycle when neither the caller nor the spec
+// provides values. The editor then fills them from history and completion.
+var ErrNoValues = errors.New("no values to cycle")
 
 // Apply runs t against cmd.
 func Apply(cmd *model.Command, sp *spec.Spec, t spec.Transform) error {
@@ -108,7 +113,7 @@ func Cycle(cmd *model.Command, sp *spec.Spec, key string, values []string) error
 		isFlag = false
 	}
 	if len(values) == 0 {
-		return fmt.Errorf("no values to cycle for %q", key)
+		return fmt.Errorf("%w for %q", ErrNoValues, key)
 	}
 	i := cmd.Find(key)
 	if i < 0 {

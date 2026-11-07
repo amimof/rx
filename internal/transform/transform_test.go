@@ -1,6 +1,7 @@
 package transform
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/amimof/rx/internal/model"
@@ -137,6 +138,26 @@ func TestTransforms(t *testing.T) {
 		}
 		if got := cmd.Render(); got != tt.want {
 			t.Errorf("%q => %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestCycleWithoutValues(t *testing.T) {
+	cmd, sp := setup(t, "k get pods")
+	if err := Cycle(cmd, sp, "resource", nil); !errors.Is(err, ErrNoValues) {
+		t.Fatalf("err = %v, want ErrNoValues", err)
+	}
+	if got := cmd.Render(); got != "k get pods" {
+		t.Fatalf("command changed to %q", got)
+	}
+	// Values supplied by the caller wrap around for positionals.
+	values := []string{"pods", "secrets"}
+	for _, want := range []string{"k get secrets", "k get pods"} {
+		if err := Cycle(cmd, sp, "resource", values); err != nil {
+			t.Fatal(err)
+		}
+		if got := cmd.Render(); got != want {
+			t.Fatalf("got %q, want %q", got, want)
 		}
 	}
 }
