@@ -445,6 +445,70 @@ func TestCycleFromHistorySource(t *testing.T) {
 	}
 }
 
+func TestRunCtrlE(t *testing.T) {
+	h := newHarness(t, "k get pods -n monitoring", nil)
+	h.keys(typ("ksys"), key(tea.KeyCtrlE))
+	if !h.m.quitting || h.m.cancelled || !h.m.run {
+		t.Fatalf("ctrl+e should accept and run: quitting %v, cancelled %v, run %v", h.m.quitting, h.m.cancelled, h.m.run)
+	}
+	if got := h.m.cmd.Render(); got != "k get pods -n kube-system" {
+		t.Fatalf("result = %q", got)
+	}
+
+	// Enter only puts the command back.
+	h = newHarness(t, "k get pods -n monitoring", nil)
+	h.keys(key(tea.KeyEnter))
+	if !h.m.quitting || h.m.run {
+		t.Fatalf("enter: quitting %v, run %v", h.m.quitting, h.m.run)
+	}
+}
+
+func TestCustomKeymap(t *testing.T) {
+	h := newHarness(t, "k get pods -n monitoring", nil)
+	km := DefaultKeys()
+	km[ActAccept] = []string{"ctrl+j"}
+	km[ActDown] = []string{"ctrl+e"}
+	km[ActRun] = nil
+	h.m.keys, h.m.act = km, km.actions()
+
+	h.keys(key(tea.KeyEnter))
+	if h.m.quitting {
+		t.Fatal("enter is no longer bound to accept")
+	}
+	h.keys(key(tea.KeyCtrlE))
+	if h.m.sel != 0 {
+		t.Fatalf("ctrl+e should move down, sel = %d", h.m.sel)
+	}
+	if help := h.m.help(); !strings.Contains(help, "^j accept") || strings.Contains(help, "enter") {
+		t.Fatalf("help = %q", help)
+	}
+	h.keys(key(tea.KeyCtrlJ))
+	if !h.m.quitting || h.m.cancelled {
+		t.Fatal("ctrl+j should accept")
+	}
+}
+
+func TestKeymapValidate(t *testing.T) {
+	for _, tt := range []struct {
+		km   Keymap
+		want string
+	}{
+		{DefaultKeys(), ""},
+		{Keymap{"nope": {"ctrl+x"}}, `unknown action "nope"`},
+		{Keymap{ActAccept: {""}}, "empty key"},
+		{Keymap{ActAccept: {"x"}}, "used for typing"},
+		{Keymap{ActAccept: {"ctrl+x"}, ActDrop: {"ctrl+x"}}, "bound to both accept and drop"},
+		{Keymap{ActDrop: nil}, ""},
+		{func() Keymap { k := DefaultKeys(); k[ActAccept] = []string{"enter", "ctrl+e"}; return k }(), "bound to both accept and run"},
+		{Keymap{"yank": {"ctrl+y"}}, `unknown action "yank"`},
+	} {
+		err := tt.km.Validate()
+		if tt.want == "" && err != nil || tt.want != "" && (err == nil || !strings.Contains(err.Error(), tt.want)) {
+			t.Errorf("%v: err = %v, want %q", tt.km, err, tt.want)
+		}
+	}
+}
+
 func TestHistoryRanksFirst(t *testing.T) {
 	es, _ := history.ReadZsh(strings.NewReader(": 1:0;k get pods -n monitoring\n: 2:0;k get pods -n monitoring\n"))
 	reg := spec.NewRegistry()

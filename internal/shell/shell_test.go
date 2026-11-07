@@ -33,7 +33,7 @@ func TestRegistry(t *testing.T) {
 		if !ok || s.Name != n || s.Script == nil || s.HistFile == nil || s.ReadHistory == nil {
 			t.Errorf("shell %q incomplete: %+v", n, s)
 		}
-		if !strings.Contains(s.Script("/bin/rx"), "/bin/rx") {
+		if !strings.Contains(s.Script(ScriptOptions{Bin: "/bin/rx"}), "/bin/rx") {
 			t.Errorf("shell %q: script does not use the binary path", n)
 		}
 	}

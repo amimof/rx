@@ -27,11 +27,15 @@ const (
 	Bytes
 )
 
+// ScriptOptions are the values `rx init` bakes into a widget script: the rx
+// binary and the configured key binding and log file.
+type ScriptOptions = zsh.Options
+
 // Shell describes one supported shell.
 type Shell struct {
 	Name string
-	// Script returns the widget script calling the rx binary at bin.
-	Script func(bin string) string
+	// Script returns the widget script.
+	Script func(ScriptOptions) string
 	// HistFile is the default history file, used when the widget does not
 	// set RX_HISTFILE.
 	HistFile func() string

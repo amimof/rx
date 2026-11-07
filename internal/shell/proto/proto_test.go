@@ -30,7 +30,7 @@ func fakeShell(t *testing.T, in io.Reader, out io.Writer, delay time.Duration) <
 				fmt.Fprintf(out, "C\thost-a\t\thosts\n")
 				fmt.Fprintf(out, "M\tremote host name\nEND\n")
 			case "DONE":
-				final <- f[1] + " " + Unescape(f[2])
+				final <- strings.Join(append([]string{f[1], Unescape(f[2])}, f[3:]...), " ")
 				return
 			case "CANCEL":
 				final <- "cancel"
@@ -72,6 +72,19 @@ func TestClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := <-final; got != "10 ssh host-a" {
+		t.Errorf("final = %q", got)
+	}
+}
+
+func TestClientRun(t *testing.T) {
+	toShellR, toShellW := io.Pipe()
+	fromShellR, fromShellW := io.Pipe()
+	final := fakeShell(t, toShellR, fromShellW, 0)
+	c := NewClient("zsh", fromShellR, toShellW)
+	if err := c.Run("ssh\thost-a", 10); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-final; got != "10 ssh\thost-a run" {
 		t.Errorf("final = %q", got)
 	}
 }

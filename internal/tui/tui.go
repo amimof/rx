@@ -33,12 +33,16 @@ type Options struct {
 	Engine  *engine.Engine
 	Infer   spec.Inferrer
 	TTY     *os.File
+	// Keys binds the editor's actions; nil uses DefaultKeys.
+	Keys Keymap
 }
 
 // Outcome is the result of an editing session.
 type Outcome struct {
 	Cancelled bool
-	Cmd       *model.Command
+	// Run is set when the user asked the shell to run the command.
+	Run bool
+	Cmd *model.Command
 }
 
 // Run runs the editor on the terminal until the user accepts or cancels.
@@ -59,7 +63,7 @@ func run(o Options, in io.Reader, out io.Writer) (Outcome, error) {
 		return Outcome{Cancelled: true}, err
 	}
 	fm := final.(*Model)
-	return Outcome{Cancelled: fm.cancelled, Cmd: fm.cmd}, nil
+	return Outcome{Cancelled: fm.cancelled, Run: fm.run, Cmd: fm.cmd}, nil
 }
 
 type styles struct {
@@ -121,10 +125,14 @@ type Model struct {
 	// cycle is a cycle transform waiting for candidates to fill its values.
 	cycle *pendingCycle
 
+	keys Keymap
+	act  map[string]string // key -> action
+
 	ctx       context.Context
 	send      func(engine.Update)
 	width     int
 	cancelled bool
+	run       bool
 	quitting  bool
 }
 
@@ -135,7 +143,11 @@ type pendingCycle struct {
 }
 
 func newModel(o Options, st styles) *Model {
-	m := &Model{o: o, st: st, cmd: o.Cmd, sp: o.Spec, width: 80}
+	m := &Model{o: o, st: st, cmd: o.Cmd, sp: o.Spec, width: 80, keys: o.Keys}
+	if m.keys == nil {
+		m.keys = DefaultKeys()
+	}
+	m.act = m.keys.actions()
 	m.addPlaceholders()
 	return m
 }
@@ -473,11 +485,11 @@ func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	// Any other key is the user taking over the selection.
 	m.pin = ""
-	switch k.Type {
-	case tea.KeyCtrlC:
+	switch m.act[k.String()] {
+	case ActCancel:
 		m.cancelled, m.quitting = true, true
 		return m, tea.Quit
-	case tea.KeyEsc:
+	case ActBack:
 		if m.query != "" || m.sel >= 0 {
 			m.query, m.sel = "", -1
 			m.filter()
@@ -485,11 +497,15 @@ func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.cancelled, m.quitting = true, true
 		return m, tea.Quit
-	case tea.KeyEnter:
+	case ActAccept:
 		m.commit()
 		m.quitting = true
 		return m, tea.Quit
-	case tea.KeyTab:
+	case ActRun:
+		m.commit()
+		m.run, m.quitting = true, true
+		return m, tea.Quit
+	case ActNextSlot:
 		if m.commit() {
 			// Added a flag that takes a value: stay on it.
 			m.refocus()
@@ -497,26 +513,38 @@ func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.focus = (m.focus + 1) % (len(m.cmd.Slots) + 1)
 		m.refocus()
-	case tea.KeyShiftTab:
+	case ActPrevSlot:
 		m.commit()
 		m.focus = (m.focus + len(m.cmd.Slots)) % (len(m.cmd.Slots) + 1)
 		m.refocus()
-	case tea.KeyUp, tea.KeyCtrlP:
+	case ActUp:
 		if m.sel > -1 {
 			m.sel--
 		}
-	case tea.KeyDown, tea.KeyCtrlN:
+	case ActDown:
 		if m.sel < len(m.rows)-1 {
 			m.sel++
 		}
-	case tea.KeyCtrlS:
+	case ActSource:
 		m.nextSource()
-	case tea.KeyCtrlD:
+	case ActDrop:
 		// Delete the focused slot.
 		if !m.onAddSlot() {
 			m.cmd.Remove(m.focus)
 			m.refocus()
 		}
+	case ActClear:
+		m.query, m.sel = "", -1
+		m.filter()
+	default:
+		m.typeKey(k)
+	}
+	return m, nil
+}
+
+// typeKey edits the search with keys that aren't bound to an action.
+func (m *Model) typeKey(k tea.KeyMsg) {
+	switch k.Type {
 	case tea.KeyBackspace:
 		if m.query != "" {
 			r := []rune(m.query)
@@ -526,9 +554,6 @@ func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.sel = -1
 			}
 		}
-	case tea.KeyCtrlU, tea.KeyCtrlW:
-		m.query, m.sel = "", -1
-		m.filter()
 	case tea.KeySpace:
 		m.query += " "
 		m.filter()
@@ -538,7 +563,6 @@ func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.filter()
 		}
 	}
-	return m, nil
 }
 
 // autoCycle cycles the slot with key through the candidates the editor would
@@ -754,7 +778,7 @@ func (m *Model) preview() string {
 }
 
 func (m *Model) help() string {
-	h := "tab/s-tab slot · ↑↓ pick · enter accept · ^s source · ^d drop · esc cancel"
+	h := m.keys.help()
 	if m.sp != nil {
 		var ts []string
 		for _, t := range m.sp.Transforms {
