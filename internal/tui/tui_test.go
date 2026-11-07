@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -91,7 +92,8 @@ func (h *harness) keys(ks ...tea.KeyMsg) {
 	for _, k := range ks {
 		before := h.m.reqID
 		h.m.Update(k)
-		if h.m.reqID != before && !h.m.quitting {
+		// History and spec sources load without an engine request.
+		if h.m.reqID != before && h.m.loading && !h.m.quitting {
 			h.pump()
 		}
 	}
@@ -376,6 +378,70 @@ func TestCycleWithoutCandidates(t *testing.T) {
 	}
 	if got := h.m.cmd.Render(); got != "k get pods" {
 		t.Fatalf("command changed to %q", got)
+	}
+}
+
+func TestCycleSource(t *testing.T) {
+	es, _ := history.ReadZsh(strings.NewReader(": 1:0;k get pods -n monitoring\n: 2:0;k get pods -n old\n"))
+	reg := spec.NewRegistry()
+	_ = reg.LoadFS(plugins.FS, "")
+	x := history.Build(es, spec.Classifier{Specs: reg, Aliases: spec.Aliases{"k": "kubectl"}})
+	h := newRegHarness(t, reg, "k get pods -n default", x)
+	values := func() string {
+		var vs []string
+		for _, r := range h.m.rows {
+			vs = append(vs, r.value)
+		}
+		sort.Strings(vs)
+		return strings.Join(vs, ",")
+	}
+	for _, step := range []struct{ active, values string }{
+		{"history", "monitoring,old"},
+		{"cobra", "default,kube-system,monitoring"},
+		{"", "default,kube-system,monitoring,old"},
+	} {
+		h.keys(key(tea.KeyCtrlS))
+		if h.m.active != step.active || values() != step.values {
+			t.Fatalf("source %q: rows %s, want %q: %s", h.m.active, values(), step.active, step.values)
+		}
+	}
+
+	// The choice sticks across slots: one without history shows all, and
+	// history is back on returning.
+	h.keys(key(tea.KeyCtrlS))
+	h.keys(key(tea.KeyShiftTab))
+	if s := h.m.cmd.Slots[h.m.focus]; s.Key != "name" || h.m.active != "" {
+		t.Fatalf("on %s: active %q, want all", s.Key, h.m.active)
+	}
+	h.keys(key(tea.KeyTab))
+	if h.m.active != "history" || values() != "monitoring,old" {
+		t.Fatalf("back on namespace: active %q, rows %s", h.m.active, values())
+	}
+	if !strings.Contains(h.m.View(), "namespace [history]:") {
+		t.Fatal("view should show the active source")
+	}
+
+	// A typed query survives switching source.
+	h.keys(typ("mon"), key(tea.KeyCtrlS))
+	if h.m.query != "mon" || h.m.active != "cobra" || h.m.selected() != "monitoring" {
+		t.Fatalf("query %q, active %q, selected %q", h.m.query, h.m.active, h.m.selected())
+	}
+}
+
+// Cycles fill values from the active source, which for history needs no
+// engine request.
+func TestCycleFromHistorySource(t *testing.T) {
+	es, _ := history.ReadZsh(strings.NewReader(": 1:0;k get pods -n monitoring\n"))
+	reg := cycleRegistry(t)
+	x := history.Build(es, spec.Classifier{Specs: reg, Aliases: spec.Aliases{"k": "kubectl"}})
+	h := newRegHarness(t, reg, "k get pods -n default", x)
+	h.keys(key(tea.KeyCtrlS))
+	if h.m.active != "history" {
+		t.Fatalf("active = %q", h.m.active)
+	}
+	h.keys(alt("N"))
+	if got := h.m.cmd.Render(); got != "k get pods -n monitoring" {
+		t.Fatalf("got %q", got)
 	}
 }
 

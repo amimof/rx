@@ -90,6 +90,13 @@ func (b *execBackend) Complete(ctx context.Context, _ complete.Request) (complet
 // nothing to complete: the editor calls Start from its event loop, and
 // send delivers to that same loop, so a synchronous call would deadlock.
 func (e *Engine) Start(ctx context.Context, id uint64, cmd *model.Command, sp *spec.Spec, focus int, send func(Update)) {
+	e.StartFrom(ctx, id, cmd, sp, focus, "", send)
+}
+
+// StartFrom is Start with the backend forced to source, one of the names
+// returned by Sources. An empty source picks the backend as Start does; a
+// source that isn't available completes with no candidates.
+func (e *Engine) StartFrom(ctx context.Context, id uint64, cmd *model.Command, sp *spec.Spec, focus int, source string, send func(Update)) {
 	var req complete.Request
 	var prov *execBackend
 	var early *Update // delivered instead of running a backend
@@ -98,9 +105,10 @@ func (e *Engine) Start(ctx context.Context, id uint64, cmd *model.Command, sp *s
 	} else {
 		slot := cmd.Slots[focus]
 		req = complete.Synthesize(cmd, focus)
+		name := providerFor(sp, slot)
 		if slot.Kind == model.Bool {
 			early = &Update{ID: id, Done: true}
-		} else if name := providerFor(sp, slot); name != "" {
+		} else if name != "" && (source == "" || source == "provider:"+name) {
 			p := sp.Providers[name]
 			script, err := provider.Render(p, cmd)
 			if err != nil {
@@ -125,6 +133,10 @@ func (e *Engine) Start(ctx context.Context, id uint64, cmd *model.Command, sp *s
 				ttl = e.TTL
 			}
 			j = &job{backend: prov, req: req, ttl: ttl}
+		} else if source != "" {
+			if b := e.forced(source); b != nil {
+				j = &job{backend: b, req: req, ttl: e.TTL}
+			}
 		} else if b := e.backendFor(ctx, head, name, sp); b != nil {
 			j = &job{backend: b, req: req, ttl: e.TTL}
 		}
@@ -157,6 +169,47 @@ func (e *Engine) run(ctx context.Context, id uint64, j job, cmdName string, send
 		_ = e.Cache.Put(src, j.req, res)
 	}
 	send(Update{ID: id, Source: src, Result: res, Err: err, Done: true})
+}
+
+// forced returns the cobra or shell backend named source, or nil.
+func (e *Engine) forced(source string) complete.Backend {
+	switch {
+	case source == e.cobra.Name():
+		return &e.cobra
+	case e.Shell != nil && source == e.Shell.Name():
+		return e.Shell
+	}
+	return nil
+}
+
+// Sources returns the names of the backends that can complete slot focus of
+// cmd (flag names when focus is -1): its provider, cobra and the shell. It
+// never blocks, so cobra is only offered once the spec or a cached INFO says
+// the command is cobra-generated; unknown binaries are never probed.
+func (e *Engine) Sources(cmd *model.Command, sp *spec.Spec, focus int) []string {
+	var out []string
+	if focus >= 0 {
+		slot := cmd.Slots[focus]
+		if slot.Kind == model.Bool {
+			return nil
+		}
+		if name := providerFor(sp, slot); name != "" {
+			out = append(out, "provider:"+name)
+		}
+	}
+	if sp.Backend() == spec.CompleteNone {
+		return out
+	}
+	e.mu.Lock()
+	cobra := !e.disabled[cmd.Name] && (sp.Backend() == spec.CompleteCobra || e.infos[cmd.Head.Value].Cobra)
+	e.mu.Unlock()
+	if cobra {
+		out = append(out, e.cobra.Name())
+	}
+	if e.Shell != nil {
+		out = append(out, e.Shell.Name())
+	}
+	return out
 }
 
 func providerFor(sp *spec.Spec, s model.Slot) string {

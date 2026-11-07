@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -175,6 +176,69 @@ func TestEngineShell(t *testing.T) {
 		if want := map[string]int{"shell": 0, "auto": 1}[backend]; sh.infos != want {
 			t.Errorf("%s: %d INFO requests, want %d", backend, sh.infos, want)
 		}
+	}
+}
+
+func TestSources(t *testing.T) {
+	cmd, sp := setup(t, "tool --verbose -e dev arg")
+	sh := &fakeShell{}
+	e := New(sh, nil)
+	for _, tt := range []struct {
+		key  string
+		want string
+	}{
+		{"env", "provider:envs"}, // complete: none hides cobra and the shell
+		{"verbose", ""},
+		{"pos:0", ""},
+	} {
+		if got := strings.Join(e.Sources(cmd, sp, cmd.Find(tt.key)), ","); got != tt.want {
+			t.Errorf("%s: sources = %q, want %q", tt.key, got, tt.want)
+		}
+	}
+
+	for _, tt := range []struct {
+		backend string
+		sh      Shell
+		want    string
+	}{
+		{"cobra", sh, "cobra,fakesh"},
+		{"cobra", nil, "cobra"},
+		// Auto with no cached INFO saying cobra: the shell only.
+		{"auto", sh, "fakesh"},
+		{"shell", sh, "fakesh"},
+	} {
+		osp, err := spec.Parse([]byte("match: { command: other }\ncomplete: "+tt.backend+"\n"), "other.yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		reg := spec.NewRegistry()
+		reg.Add(osp)
+		ocmd := (&spec.Classifier{Specs: reg}).Classify(parse.Parse("other a"), 0)
+		if got := strings.Join(New(tt.sh, nil).Sources(ocmd, osp, 0), ","); got != tt.want {
+			t.Errorf("%s: sources = %q, want %q", tt.backend, got, tt.want)
+		}
+	}
+}
+
+// A forced source overrides the spec's backend.
+func TestStartFrom(t *testing.T) {
+	sp, err := spec.Parse([]byte("match: { command: other }\ncomplete: cobra\n"), "other.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := spec.NewRegistry()
+	reg.Add(sp)
+	cmd := (&spec.Classifier{Specs: reg}).Classify(parse.Parse("other a b"), 0)
+	e := New(&fakeShell{}, nil)
+	ch := make(chan Update, 10)
+	e.StartFrom(context.Background(), 1, cmd, sp, cmd.Find("pos:1"), "fakesh", func(u Update) { ch <- u })
+	select {
+	case u := <-ch:
+		if u.Source != "fakesh" || len(u.Result.Candidates) != 1 {
+			t.Fatalf("update = %+v", u)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out")
 	}
 }
 
