@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -112,6 +113,11 @@ type Model struct {
 	message string
 	errText string
 
+	// source is the source chosen with Ctrl-S ("" for all), kept across
+	// slots. active is the one in use for the focused slot: source if the
+	// slot has it, else "".
+	source, active string
+
 	// cycle is a cycle transform waiting for candidates to fill its values.
 	cycle *pendingCycle
 
@@ -191,37 +197,103 @@ func (m *Model) refocus() {
 		m.focus = 0
 	}
 	m.query, m.sel, m.pin = "", -1, ""
+	m.load()
+}
+
+// load reloads candidates for the focused slot from the active source,
+// keeping the query.
+func (m *Model) load() {
 	m.cands = map[string]*row{}
 	m.message, m.errText, m.stale = "", "", false
 	m.reqID++
-	m.loading = true
 
-	now := time.Now()
-	if m.onAddSlot() {
-		for _, c := range m.o.History.Candidates(m.cmd.Name, history.FlagsKey, now) {
-			if m.cmd.Find(m.flagKey(c.Value)) < 0 {
-				m.merge(c.Value, "", "history", c.Score, 0)
-			}
-		}
-		if m.sp != nil {
-			for _, f := range m.sp.Flags {
-				if m.cmd.Find(f.Name) < 0 {
-					m.merge("--"+f.Name, "", "spec", 0, 0)
-				}
-			}
-		}
-		m.o.Engine.Start(m.ctx, m.reqID, m.cmd, m.sp, -1, m.send)
-	} else {
-		s := m.cmd.Slots[m.focus]
-		for _, c := range m.o.History.Candidates(m.cmd.Name, s.Key, now) {
+	hist, vals := m.historyCands(), m.specCands()
+	m.active = ""
+	if slices.Contains(m.sources(hist, vals), m.source) {
+		m.active = m.source
+	}
+	if m.active == "" || m.active == "history" {
+		for _, c := range hist {
 			m.merge(c.Value, "", "history", c.Score, 0)
 		}
-		for i, v := range m.specValues(s) {
+	}
+	if m.active == "" || m.active == "spec" {
+		for i, v := range vals {
 			m.merge(v, "", "spec", 0, i)
 		}
-		m.o.Engine.Start(m.ctx, m.reqID, m.cmd, m.sp, m.focus, m.send)
+	}
+	switch m.active {
+	case "history", "spec":
+		m.loading = false
+	default:
+		m.loading = true
+		m.o.Engine.StartFrom(m.ctx, m.reqID, m.cmd, m.sp, m.engineFocus(), m.active, m.send)
 	}
 	m.filter()
+}
+
+// engineFocus is the focused slot as passed to the engine: -1 for flag
+// names on the "+ flag" slot.
+func (m *Model) engineFocus() int {
+	if m.onAddSlot() {
+		return -1
+	}
+	return m.focus
+}
+
+// historyCands returns the focused slot's values from history, or the flags
+// not yet in the command on the "+ flag" slot.
+func (m *Model) historyCands() []history.Candidate {
+	now := time.Now()
+	if !m.onAddSlot() {
+		return m.o.History.Candidates(m.cmd.Name, m.cmd.Slots[m.focus].Key, now)
+	}
+	var out []history.Candidate
+	for _, c := range m.o.History.Candidates(m.cmd.Name, history.FlagsKey, now) {
+		if m.cmd.Find(m.flagKey(c.Value)) < 0 {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// specCands returns the focused slot's values from the spec, or the spec's
+// flags not yet in the command on the "+ flag" slot.
+func (m *Model) specCands() []string {
+	if !m.onAddSlot() {
+		return m.specValues(m.cmd.Slots[m.focus])
+	}
+	var out []string
+	if m.sp != nil {
+		for _, f := range m.sp.Flags {
+			if m.cmd.Find(f.Name) < 0 {
+				out = append(out, "--"+f.Name)
+			}
+		}
+	}
+	return out
+}
+
+// sources returns the sources Ctrl-S cycles through for the focused slot,
+// starting with "" for all of them merged.
+func (m *Model) sources(hist []history.Candidate, vals []string) []string {
+	out := []string{""}
+	if len(hist) > 0 {
+		out = append(out, "history")
+	}
+	if len(vals) > 0 {
+		out = append(out, "spec")
+	}
+	return append(out, m.o.Engine.Sources(m.cmd, m.sp, m.engineFocus())...)
+}
+
+// nextSource switches to the source after the active one and reloads.
+func (m *Model) nextSource() {
+	srcs := m.sources(m.historyCands(), m.specCands())
+	i := slices.Index(srcs, m.active)
+	m.source = srcs[(i+1)%len(srcs)]
+	m.sel = -1
+	m.load()
 }
 
 func (m *Model) specValues(s model.Slot) []string {
@@ -437,6 +509,8 @@ func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.sel < len(m.rows)-1 {
 			m.sel++
 		}
+	case tea.KeyCtrlS:
+		m.nextSource()
 	case tea.KeyCtrlD:
 		// Delete the focused slot.
 		if !m.onAddSlot() {
@@ -483,16 +557,15 @@ func (m *Model) autoCycle(key string) {
 	}
 	// An added slot may land on the focused index (the "+ flag" slot), whose
 	// candidates are flag names, so it always needs a fresh load.
-	if i == m.focus && !added && !m.loading {
-		m.cycle = &pendingCycle{id: m.reqID, key: key}
-		m.finishCycle()
-		return
-	}
 	if i != m.focus || added {
 		m.focus = i
 		m.refocus()
 	}
 	m.cycle = &pendingCycle{id: m.reqID, key: key, added: added}
+	// History and spec sources load synchronously.
+	if !m.loading {
+		m.finishCycle()
+	}
 }
 
 // finishCycle applies the pending cycle using the focused slot's
@@ -596,6 +669,9 @@ func (m *Model) View() string {
 	if !m.onAddSlot() {
 		label = m.cmd.Slots[m.focus].Label
 	}
+	if m.active != "" {
+		label += " [" + m.active + "]"
+	}
 	status := ""
 	switch {
 	case m.loading && m.stale:
@@ -678,7 +754,7 @@ func (m *Model) preview() string {
 }
 
 func (m *Model) help() string {
-	h := "tab/s-tab slot · ↑↓ pick · enter accept · ^d drop · esc cancel"
+	h := "tab/s-tab slot · ↑↓ pick · enter accept · ^s source · ^d drop · esc cancel"
 	if m.sp != nil {
 		var ts []string
 		for _, t := range m.sp.Transforms {

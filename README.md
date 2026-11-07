@@ -55,6 +55,7 @@ rx-doctor
 | Type | Fuzzy-search values for the slot |
 | `↑` `↓` | Pick a value |
 | `Enter` | Put the command back in the prompt |
+| `Ctrl+S` | Cycle the suggestion source: all, history, spec, provider, cobra, shell |
 | `Ctrl+D` | Remove the current slot |
 | `Esc` | Clear the search, press again to cancel |
 | `Alt+<key>` | Plugin shortcuts, e.g. `Alt+A` toggles `--all-namespaces` for kubectl |
@@ -103,7 +104,7 @@ match: { command: find }
 focus: [-name, -type] # `find . -name "*.txt" -type d` starts on "*.txt"
 ```
 
-By default rx asks your shell for completions, or calls the command's own completion directly when it is built with cobra (like kubectl). Set `complete:` to `shell`, `cobra` or `none` to choose explicitly.
+By default rx asks your shell for completions, or calls the command's own completion directly when it is built with cobra (like kubectl). Set `complete:` to `shell`, `cobra` or `none` to choose explicitly. In the editor, `Ctrl+S` switches to a single source for the rest of the session. Only the sources a slot has are offered, and cobra only for commands rx knows are built with it.
 
 Check your plugin with `rx plugins lint my-plugin.yaml`.
 
