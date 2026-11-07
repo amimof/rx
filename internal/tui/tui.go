@@ -100,6 +100,9 @@ type Model struct {
 	query string
 	rows  []row
 	sel   int // -1 keeps the current value
+	// pin is a value the selection follows as candidates arrive, until the
+	// user moves it. Set after a cycle so the active value is selected.
+	pin string
 
 	// Candidates for the focused slot, merged from all sources.
 	cands   map[string]*row
@@ -187,7 +190,7 @@ func (m *Model) refocus() {
 	if m.focus < 0 {
 		m.focus = 0
 	}
-	m.query, m.sel = "", -1
+	m.query, m.sel, m.pin = "", -1, ""
 	m.cands = map[string]*row{}
 	m.message, m.errText, m.stale = "", "", false
 	m.reqID++
@@ -364,6 +367,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.query == "" {
 			m.sel = min(keepSel, len(m.rows)-1)
 		}
+		m.selectPin()
 		if msg.Done && m.cycle != nil && m.cycle.id == msg.ID {
 			m.finishCycle()
 		}
@@ -386,11 +390,17 @@ func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.errText = err.Error()
 					return m, nil
 				}
-				m.refocus()
+				if t.Op == "cycle" {
+					m.afterCycle(t.Target())
+				} else {
+					m.refocus()
+				}
 				return m, nil
 			}
 		}
 	}
+	// Any other key is the user taking over the selection.
+	m.pin = ""
 	switch k.Type {
 	case tea.KeyCtrlC:
 		m.cancelled, m.quitting = true, true
@@ -506,10 +516,33 @@ func (m *Model) finishCycle() {
 		m.errText = err.Error()
 		return
 	}
-	if i := m.cmd.Find(c.key); i >= 0 {
+	m.afterCycle(c.key)
+}
+
+// afterCycle focuses the cycled slot and selects its new value in the list.
+// A flag cycled to absent has no slot, so focus stays where it was.
+func (m *Model) afterCycle(key string) {
+	if i := m.cmd.Find(key); i >= 0 {
 		m.focus = i
 	}
 	m.refocus()
+	if i := m.cmd.Find(key); i >= 0 && i == m.focus {
+		m.pin = m.cmd.Slots[i].Value
+		m.selectPin()
+	}
+}
+
+// selectPin selects the row for the pinned value, if it has arrived.
+func (m *Model) selectPin() {
+	if m.pin == "" || m.query != "" {
+		return
+	}
+	for i, r := range m.rows {
+		if r.value == m.pin {
+			m.sel = i
+			return
+		}
+	}
 }
 
 // commit applies the selected row to the focused slot. It reports whether a

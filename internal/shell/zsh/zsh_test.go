@@ -146,9 +146,9 @@ func (s *shell) run(steps ...string) {
 	}
 }
 
-// typeAndEdit types line, then presses Alt-e.
+// typeAndEdit types line, then presses Ctrl-X Ctrl-X.
 func typeAndEdit(line string) []string {
-	return []string{"key:" + line, "key:\x1be"}
+	return []string{"key:" + line, "key:\x18\x18"}
 }
 
 // accept presses Enter and waits for the command to be recorded.
@@ -257,7 +257,7 @@ func TestWidgetRestoresBuffer(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := fake(t, script...)
-			// Cursor goes back two characters before Alt-e; "XY" typed
+			// Cursor goes back two characters before Ctrl-X Ctrl-X; "XY" typed
 			// afterwards must land there.
 			steps := append([]string{"key:fixture beta", "key:\x02\x02"}, typeAndEdit("")...)
 			steps = append(steps, "sleep:0.3", "key:XY")
@@ -287,11 +287,11 @@ func TestWidgetKeymaps(t *testing.T) {
 			steps := []string{"key:fixture b"}
 			switch name {
 			case "vi command":
-				steps = append(steps, "key:\x1b", "sleep:0.4", "key:\x1be")
+				steps = append(steps, "key:\x1b", "sleep:0.4", "key:\x18\x18")
 			case "rx-bind key":
 				steps = append(steps, "key:\x18r")
 			default:
-				steps = append(steps, "key:\x1be")
+				steps = append(steps, "key:\x18\x18")
 			}
 			s.run(append(steps, "sleep:0.3", "key:\r", "file:"+filepath.Join(s.dir, "ran"))...)
 			if got := s.read("ran"); got != "fixture alpha\n" {
