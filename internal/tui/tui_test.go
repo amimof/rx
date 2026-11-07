@@ -313,6 +313,47 @@ func TestCycleFillsValuesFromCompletion(t *testing.T) {
 		if got := h.m.cmd.Render(); got != want {
 			t.Fatalf("got %q, want %q", got, want)
 		}
+		if ns, ok := strings.CutPrefix(want, "k get pods -n "); ok {
+			if got := h.m.selected(); got != ns {
+				t.Fatalf("%q: selected %q, want %q", want, got, ns)
+			}
+		}
+	}
+}
+
+// selected returns the value of the selected row, or "" if none is.
+func (m *Model) selected() string {
+	if m.sel < 0 || m.sel >= len(m.rows) {
+		return ""
+	}
+	return m.rows[m.sel].value
+}
+
+func TestCycleSelectsActiveValue(t *testing.T) {
+	h := newHarness(t, "k get pods -n monitoring", nil)
+	for _, want := range []string{"wide", "yaml"} {
+		h.keys(alt("o"))
+		if s := h.m.cmd.Slots[h.m.focus]; s.Key != "output" || s.Value != want {
+			t.Fatalf("focused slot = %+v, want output %s", s, want)
+		}
+		if got := h.m.selected(); got != want {
+			t.Fatalf("selected %q, want %q", got, want)
+		}
+	}
+	// Moving the selection releases it from the active value, so later
+	// completion updates leave it alone.
+	h.keys(key(tea.KeyDown))
+	moved := h.m.selected()
+	if moved == "yaml" {
+		t.Fatal("down should move off the active value")
+	}
+	h.m.Update(updateMsg{ID: h.m.reqID, Done: true})
+	if got := h.m.selected(); got != moved {
+		t.Fatalf("selection snapped back to %q, want %q", got, moved)
+	}
+	h.keys(key(tea.KeyEnter))
+	if got := h.m.cmd.Render(); got != "k get pods -n monitoring -o "+moved {
+		t.Fatalf("result = %q", got)
 	}
 }
 

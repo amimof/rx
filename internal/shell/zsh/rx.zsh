@@ -234,7 +234,7 @@ zle -N rx-edit
 # rx-bind [key]: bind rx-edit in the emacs, viins and vicmd keymaps. Call it
 # again after plugins that reset keymaps (e.g. zsh-vi-mode) have loaded.
 rx-bind() {
-  local key=${1:-${RX_KEY:-^[e}} km
+  local key=${1:-${RX_KEY:-^X^X}} km
   for km in emacs viins vicmd; do
     bindkey -M $km "$key" rx-edit
   done

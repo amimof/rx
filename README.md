@@ -17,7 +17,7 @@ History search gets you close, but then you still have to edit the namespace, th
 ## How it works
 
 1. Type or recall a command, e.g. `k get pods -n monitoring`.
-2. Press **Alt+e**. A small editor opens below your prompt.
+2. Press **Ctrl-X Ctrl-X**. A small editor opens below your prompt.
 3. Press **Tab** to move between slots and type to fuzzy-search values.
 4. Press **Enter**. The edited command is put back in your prompt. Press Enter again to run it.
 
@@ -61,7 +61,7 @@ rx-doctor
 
 The last slot, **+ flag**, lets you add a new flag.
 
-To use a different key than Alt+e, set `RX_KEY` before the `eval` line, or call `rx-bind` after it:
+To use a different key than Ctrl-X Ctrl-X, set `RX_KEY` before the `eval` line, or call `rx-bind` after it. The default replaces zsh's `exchange-point-and-mark` binding in emacs mode; pick another key if you use it.
 
 ```zsh
 RX_KEY='^[r'     # Alt+r
@@ -84,7 +84,7 @@ transforms:
   - { key: o, op: cycle, flag: output, desc: "cycle output" }
 ```
 
-A `cycle` transform steps through the transform's `values`, or else the flag's or positional's `values`. If neither has any, rx cycles through the candidates the editor would list for that slot: history first, then completions. The slot gets focus while they load.
+A `cycle` transform steps through the transform's `values`, or else the flag's or positional's `values`. If neither has any, rx cycles through the candidates the editor would list for that slot: history first, then completions. Cycling focuses the slot and selects its new value in the list.
 
 Use `focus:` to choose which slot the editor starts on. It takes a positional name, `pos:N`, or a flag (`namespace`, `--namespace`, `-n`), or a list of these. The first one present in the command wins. Positionals declared in the plugin can always be focused, even before they're typed. Flags that aren't in the command are skipped. Without a match, rx starts on the first flag that takes a value.
 
