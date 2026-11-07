@@ -46,11 +46,16 @@ type harness struct {
 
 func newHarness(t *testing.T, line string, hist *history.Index) *harness {
 	t.Helper()
-	fakeKubectl(t)
 	reg := spec.NewRegistry()
 	if err := reg.LoadFS(plugins.FS, ""); err != nil {
 		t.Fatal(err)
 	}
+	return newRegHarness(t, reg, line, hist)
+}
+
+func newRegHarness(t *testing.T, reg *spec.Registry, line string, hist *history.Index) *harness {
+	t.Helper()
+	fakeKubectl(t)
 	c := spec.Classifier{Specs: reg, Aliases: spec.Aliases{"k": "kubectl"}}
 	cmd := c.Classify(parse.Parse(line), 0)
 	h := &harness{t: t, ups: make(chan engine.Update, 16)}
@@ -263,6 +268,73 @@ func TestProgramTabThroughSlots(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("editor froze while tabbing through slots")
+	}
+}
+
+const cycleSpec = `
+match: { command: kubectl, aliases: [k] }
+complete: cobra
+flags:
+  - { name: namespace, short: n, takes: value }
+positionals:
+  - { index: 0, name: verb }
+  - { index: 1, name: resource }
+  - { index: 2, name: name }
+transforms:
+  - { key: N, op: cycle, flag: namespace }
+  - { key: x, op: cycle, slot: name }
+`
+
+func cycleRegistry(t *testing.T) *spec.Registry {
+	t.Helper()
+	sp, err := spec.Parse([]byte(cycleSpec), "cycle.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := spec.NewRegistry()
+	reg.Add(sp)
+	return reg
+}
+
+func TestCycleFillsValuesFromCompletion(t *testing.T) {
+	h := newRegHarness(t, cycleRegistry(t), "k get pods", nil)
+	for _, want := range []string{
+		"k get pods -n default",
+		"k get pods -n kube-system",
+		"k get pods -n monitoring",
+		// Flags cycle through absent after the last value.
+		"k get pods",
+		"k get pods -n default",
+	} {
+		h.keys(alt("N"))
+		if h.m.errText != "" {
+			t.Fatalf("error: %s", h.m.errText)
+		}
+		if got := h.m.cmd.Render(); got != want {
+			t.Fatalf("got %q, want %q", got, want)
+		}
+	}
+}
+
+func TestCycleFillsValuesFromHistory(t *testing.T) {
+	es, _ := history.ReadZsh(strings.NewReader(": 1:0;k get pods -n monitoring\n"))
+	reg := cycleRegistry(t)
+	x := history.Build(es, spec.Classifier{Specs: reg, Aliases: spec.Aliases{"k": "kubectl"}})
+	h := newRegHarness(t, reg, "k get pods", x)
+	h.keys(alt("N"))
+	if got := h.m.cmd.Render(); got != "k get pods -n monitoring" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestCycleWithoutCandidates(t *testing.T) {
+	h := newRegHarness(t, cycleRegistry(t), "k get pods", nil)
+	h.keys(alt("x"))
+	if !strings.Contains(h.m.errText, "no values to cycle") {
+		t.Fatalf("errText = %q", h.m.errText)
+	}
+	if got := h.m.cmd.Render(); got != "k get pods" {
+		t.Fatalf("command changed to %q", got)
 	}
 }
 
