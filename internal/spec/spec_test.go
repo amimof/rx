@@ -112,6 +112,57 @@ func TestRegistryOverrideDropsAliases(t *testing.T) {
 	}
 }
 
+func TestTransformKeys(t *testing.T) {
+	for _, tt := range []struct{ keys, binding, err string }{
+		{"[A]", "alt+A", ""},
+		{"[alt+A]", "alt+A", ""},
+		{"[ctrl+a]", "ctrl+a", ""},
+		{"[A, alt+A]", "alt+A", "bound twice"},
+		{"[ctrl+A]", "ctrl+A", "lowercase letter"},
+		{"[ctrl+i]", "ctrl+i", "lowercase letter"},
+		{"[ctrl+ab]", "ctrl+ab", "lowercase letter"},
+		{"[ab]", "alt+ab", "single character"},
+	} {
+		var y strings.Builder
+		y.WriteString("match: { command: x }\nflags:\n  - { name: all, takes: none }\ntransforms:\n")
+		for k := range strings.SplitSeq(strings.Trim(tt.keys, "[]"), ", ") {
+			fmt.Fprintf(&y, "  - { key: %q, op: toggle, flag: all }\n", k)
+		}
+		s, err := Parse([]byte(y.String()), "x.yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := s.Transforms[0].Binding(); got != tt.binding {
+			t.Errorf("%s: binding %q, want %q", tt.keys, got, tt.binding)
+		}
+		errs := s.Validate()
+		switch {
+		case tt.err == "" && len(errs) > 0:
+			t.Errorf("%s: unexpected %v", tt.keys, errs)
+		case tt.err != "" && (len(errs) != 1 || !strings.Contains(errs[0].Error(), tt.err)):
+			t.Errorf("%s: errors %v, want %q", tt.keys, errs, tt.err)
+		}
+	}
+}
+
+func TestValidateFocusOp(t *testing.T) {
+	s, err := Parse([]byte(`
+match: { command: x }
+positionals:
+  - { index: 0, name: name }
+transforms:
+  - { key: ctrl+g, op: focus, slot: name }
+  - { key: ctrl+o, op: focus, slot: nope }
+`), "x.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	errs := s.Validate()
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), `unknown slot "nope"`) {
+		t.Fatalf("errors = %v, want only the unknown slot", errs)
+	}
+}
+
 func TestValidateComplete(t *testing.T) {
 	for _, tt := range []struct{ backend, err string }{
 		{"", ""},

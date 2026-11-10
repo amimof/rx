@@ -93,7 +93,11 @@ func (k Keymap) label(action string) string {
 	if len(keys) == 0 {
 		return ""
 	}
-	key := keys[0]
+	return keyLabel(keys[0])
+}
+
+// keyLabel returns key as shown in the help line, e.g. "^e" for "ctrl+e".
+func keyLabel(key string) string {
 	switch key {
 	case "up":
 		return "↑"

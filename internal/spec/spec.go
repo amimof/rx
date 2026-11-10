@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
@@ -71,8 +72,10 @@ type Provider struct {
 
 // Transform is a one-key action in the editor.
 type Transform struct {
+	// Key is "ctrl+<letter>", "alt+<char>", or a bare character, which
+	// means alt+<char>.
 	Key    string   `yaml:"key"`
-	Op     string   `yaml:"op"` // toggle | cycle | set | unset
+	Op     string   `yaml:"op"` // toggle | cycle | set | unset | focus
 	Flag   string   `yaml:"flag"`
 	Slot   string   `yaml:"slot"`
 	Value  string   `yaml:"value"`
@@ -86,6 +89,31 @@ func (t Transform) Target() string {
 		return t.Flag
 	}
 	return t.Slot
+}
+
+// Binding returns the key as bubbletea names it, e.g. "ctrl+a" or "alt+A".
+func (t Transform) Binding() string {
+	if strings.HasPrefix(t.Key, "ctrl+") || strings.HasPrefix(t.Key, "alt+") {
+		return t.Key
+	}
+	return "alt+" + t.Key
+}
+
+// checkBinding reports why a transform binding can't be typed, or "".
+func checkBinding(b string) string {
+	if c, ok := strings.CutPrefix(b, "ctrl+"); ok {
+		// Terminals send ctrl+i and ctrl+m as tab and enter, and can't tell
+		// ctrl+A from ctrl+a.
+		if len(c) != 1 || c[0] < 'a' || c[0] > 'z' || c == "i" || c == "m" {
+			return "ctrl+ takes a lowercase letter other than i and m"
+		}
+		return ""
+	}
+	c, _ := strings.CutPrefix(b, "alt+")
+	if utf8.RuneCountInString(c) != 1 || c == " " {
+		return "key must be a single character"
+	}
+	return ""
 }
 
 // FocusList is a list of slot references that unmarshals from either a
@@ -244,14 +272,20 @@ func (s *Spec) Validate() []error {
 	}
 	keys := map[string]bool{}
 	for _, t := range s.Transforms {
-		if t.Key == "" {
+		b := t.Binding()
+		switch {
+		case t.Key == "":
 			add("transform without key")
-		} else if keys[t.Key] {
+		case keys[b]:
 			add("transform key %q bound twice", t.Key)
+		default:
+			if why := checkBinding(b); why != "" {
+				add("transform %q: %s", t.Key, why)
+			}
 		}
-		keys[t.Key] = true
+		keys[b] = true
 		switch t.Op {
-		case "toggle", "cycle", "set", "unset":
+		case "toggle", "cycle", "set", "unset", "focus":
 		default:
 			add("transform %q: unknown op %q", t.Key, t.Op)
 		}

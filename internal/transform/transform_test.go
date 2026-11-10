@@ -165,13 +165,68 @@ func TestCycleWithoutValues(t *testing.T) {
 func TestApplySpecTransforms(t *testing.T) {
 	cmd, sp := setup(t, "k get pods -n monitoring")
 	for _, tr := range sp.Transforms {
-		if tr.Key == "A" {
+		if tr.Key == "ctrl+a" {
 			if err := Apply(cmd, sp, tr); err != nil {
 				t.Fatal(err)
 			}
 		}
 	}
 	if got := cmd.Render(); got != "k get pods -A" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestCurl(t *testing.T) {
+	for _, in := range []string{
+		"curl -s -X POST -H 'Accept: application/json' https://example.com",
+		"curl -XPUT -d '{}' https://example.com",
+		"curl -sL https://example.com",
+	} {
+		cmd, _ := setup(t, in)
+		if got := cmd.Render(); got != in {
+			t.Errorf("round trip %q = %q", in, got)
+		}
+	}
+
+	for _, in := range []string{"curl -s -H 'A: b' https://x", "curl -sL https://x"} {
+		cmd, _ := setup(t, in)
+		if i := cmd.Find("url"); i < 0 || cmd.Slots[i].Value != "https://x" {
+			t.Errorf("%q: url slot missing: %+v", in, cmd.Slots)
+		}
+	}
+	cmd, _ := setup(t, "curl -s -H 'A: b' https://x")
+	if i := cmd.Find("silent"); i < 0 || cmd.Slots[i].Kind != model.Bool {
+		t.Fatalf("-s should be a bool flag: %+v", cmd.Slots)
+	}
+
+	method := func(cmd *model.Command, sp *spec.Spec) {
+		t.Helper()
+		for _, tr := range sp.Transforms {
+			if tr.Key == "ctrl+x" {
+				if err := Apply(cmd, sp, tr); err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+		}
+		t.Fatal("no ctrl+x transform")
+	}
+	cmd, sp := setup(t, "curl https://x")
+	for _, want := range []string{
+		"curl https://x -X POST",
+		"curl https://x -X PUT",
+		"curl https://x -X PATCH",
+		"curl https://x -X DELETE",
+		"curl https://x",
+	} {
+		method(cmd, sp)
+		if got := cmd.Render(); got != want {
+			t.Fatalf("got %q, want %q", got, want)
+		}
+	}
+	cmd, sp = setup(t, "curl -XPUT https://x")
+	method(cmd, sp)
+	if got := cmd.Render(); got != "curl -XPATCH https://x" {
 		t.Fatalf("got %q", got)
 	}
 }

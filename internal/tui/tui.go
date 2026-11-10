@@ -462,9 +462,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if k.Alt && k.Type == tea.KeyRunes && m.sp != nil {
+	if m.sp != nil {
 		for _, t := range m.sp.Transforms {
-			if t.Key == string(k.Runes) {
+			if t.Binding() == k.String() {
+				// Keep a value picked on the focused slot, as Tab does.
+				m.commit()
+				if t.Op == "focus" {
+					m.focusSlot(t.Target())
+					return m, nil
+				}
 				err := transform.Apply(m.cmd, m.sp, t)
 				if errors.Is(err, transform.ErrNoValues) {
 					m.autoCycle(t.Target())
@@ -563,6 +569,22 @@ func (m *Model) typeKey(k tea.KeyMsg) {
 			m.filter()
 		}
 	}
+}
+
+// focusSlot moves to the slot with key, adding it empty if the command
+// doesn't have it, and loads its candidates.
+func (m *Model) focusSlot(key string) {
+	i := m.cmd.Find(key)
+	if i < 0 {
+		s, err := transform.NewSlot(m.cmd, m.sp, key)
+		if err != nil {
+			m.errText = err.Error()
+			return
+		}
+		i = m.cmd.Add(s)
+	}
+	m.focus = i
+	m.refocus()
 }
 
 // autoCycle cycles the slot with key through the candidates the editor would
@@ -786,7 +808,7 @@ func (m *Model) help() string {
 			if d == "" {
 				d = t.Op + " " + t.Target()
 			}
-			ts = append(ts, "M-"+t.Key+" "+d)
+			ts = append(ts, keyLabel(t.Binding())+" "+d)
 		}
 		if len(ts) > 0 {
 			h += "\n" + strings.Join(ts, " · ")

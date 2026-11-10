@@ -1,0 +1,30 @@
+# Values come from zsh's curl completion. This file declares which flags
+# take a value, so `curl -s URL` keeps the URL as a positional, and adds a
+# method cycle. Without -X curl uses GET (or POST with -d), so the cycle
+# steps through the other methods and back to no -X.
+name: curl
+match:
+  command: curl
+flags:
+  - { name: request, short: X, takes: value, values: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
+  - { name: header, short: H, takes: value }
+  - { name: data, short: d, takes: value }
+  - { name: data-raw, takes: value }
+  - { name: json, takes: value }
+  - { name: form, short: F, takes: value }
+  - { name: user, short: u, takes: value }
+  - { name: output, short: o, takes: value }
+  - { name: user-agent, short: A, takes: value }
+  - { name: cookie, short: b, takes: value }
+  - { name: max-time, short: m, takes: value }
+  - { name: silent, short: s, takes: none }
+  - { name: location, short: L, takes: none }
+  - { name: verbose, short: v, takes: none }
+  - { name: insecure, short: k, takes: none }
+  - { name: include, short: i, takes: none }
+  - { name: head, short: I, takes: none }
+  - { name: fail, short: f, takes: none }
+positionals:
+  - { index: 0, name: url }
+transforms:
+  - { key: ctrl+x, op: cycle, flag: request, values: [POST, PUT, PATCH, DELETE], desc: "cycle method" }

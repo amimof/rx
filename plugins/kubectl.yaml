@@ -23,7 +23,8 @@ positionals:
   - { index: 1, name: resource }
   - { index: 2, name: name }
 transforms:
-  - { key: A, op: toggle, flag: all-namespaces, desc: "all namespaces" }
-  - { key: o, op: cycle, flag: output, desc: "cycle output" }
-  - { key: v, op: cycle, slot: verb, desc: "cycle verb" }
-  - { key: w, op: toggle, flag: watch, desc: "watch" }
+  - { key: ctrl+a, op: toggle, flag: all-namespaces, desc: "all namespaces" }
+  - { key: ctrl+o, op: cycle, flag: output, desc: "cycle output" }
+  - { key: ctrl+v, op: cycle, slot: verb, desc: "cycle verb" }
+  - { key: ctrl+t, op: toggle, flag: watch, desc: "watch" }
+  - { key: ctrl+g, op: focus, slot: name, desc: "jump to name" }

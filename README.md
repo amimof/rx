@@ -2,21 +2,29 @@
 
 **Edit shell commands by their parts, not by moving the cursor around.**
 
+<p align="center">
+  <img src="./demo/demo.gif"/>
+</p>
+
 > ⚠️ rx is an early MVP. Things will change, break and get renamed. Feedback and ideas are very welcome.
 
 You run the same commands over and over with small differences:
 
 ```sh
-k get pods -n kube-system
-k get pods -n monitoring
-k get pods -l app=nginx -n production
+kubectl describe pod my-app-xxx -n production
+git tag -a "v0.39.2" -m "v0.39.2"
+docker logs -f --tail=100 my-container
+ssh -i ~/.ssh/id_ed25519 user@server01
+curl -H "Authorization: Bearer $TOKEN" https://api.example.com
+find /var/log -name "*.log" -mtime -1
+tcpdump -i eth0 host 10.0.0.1 -nn
 ```
 
 History search gets you close, but then you still have to edit the namespace, the pod name or a flag by hand. rx splits the command in your prompt into **slots** (arguments and flags) and lets you change each one from a list of suggestions.
 
 ## How it works
 
-1. Type or recall a command, e.g. `k get pods -n monitoring`.
+1. Type or recall a command, e.g. `find /var/log -name "*.log" -mtime -1`.
 2. Press **Ctrl-X Ctrl-X**. A small editor opens below your prompt.
 3. Press **Tab** to move between slots and type to fuzzy-search values.
 4. Press **Enter**. The edited command is put back in your prompt. Press Enter again to run it.
@@ -62,7 +70,7 @@ rx-doctor
 | `Ctrl+U` / `Ctrl+W` | Clear the search |
 | `Esc` | Clear the search, press again to cancel |
 | `Ctrl+C` | Cancel |
-| `Alt+<key>` | Plugin shortcuts, e.g. `Alt+A` toggles `--all-namespaces` for kubectl |
+| `Ctrl+<key>` / `Alt+<key>` | Plugin shortcuts, e.g. `Ctrl+A` toggles `--all-namespaces` for kubectl |
 
 The last slot, **+ flag**, lets you add a new flag. All of these keys except plugin shortcuts can be changed in the [config file](#configuration).
 
@@ -100,7 +108,7 @@ eval "$(rx init zsh)"
 
 ## Plugins
 
-Plugins are optional YAML files that describe a command: which flags take values, which flags cancel each other out, and one-key shortcuts. rx ships with a [kubectl plugin](plugins/kubectl.yaml). You can add your own in `~/.config/rx/plugins/`.
+Plugins are optional YAML files that describe a command: which flags take values, which flags cancel each other out, and one-key shortcuts. rx ships with plugins for [kubectl](plugins/kubectl.yaml), [git](plugins/git.yaml) and [curl](plugins/curl.yaml) (`Ctrl+X` cycles the HTTP method). You can add your own in `~/.config/rx/plugins/`.
 
 ```yaml
 name: kubectl
@@ -110,11 +118,15 @@ flags:
   - { name: all-namespaces, short: A, takes: none, mutex: [namespace] }
   - { name: output, short: o, takes: value, values: [wide, yaml, json, name] }
 transforms:
-  - { key: A, op: toggle, flag: all-namespaces, desc: "all namespaces" }
-  - { key: o, op: cycle, flag: output, desc: "cycle output" }
+  - { key: ctrl+a, op: toggle, flag: all-namespaces, desc: "all namespaces" }
+  - { key: ctrl+o, op: cycle, flag: output, desc: "cycle output" }
 ```
 
+A transform `key` is `ctrl+<letter>`, `alt+<char>`, or a bare character, which means `alt+<char>`. Plugin shortcuts take precedence over the editor's own keys, so avoid `ctrl+` keys you use in the editor (by default `ctrl+c`, `d`, `e`, `n`, `p`, `s`, `u` and `w`). `ctrl+i` and `ctrl+m` can't be used, since terminals send them as Tab and Enter.
+
 A `cycle` transform steps through the transform's `values`, or else the flag's or positional's `values`. If neither has any, rx cycles through the candidates the editor would list for that slot: history first, then completions. Cycling focuses the slot and selects its new value in the list.
+
+A `focus` transform jumps to a slot so you can search its candidates and replace the value, adding the slot if the command doesn't have it yet. In kubectl, `Ctrl+G` jumps to the resource name.
 
 Use `focus:` to choose which slot the editor starts on. It takes a positional name, `pos:N`, or a flag (`namespace`, `--namespace`, `-n`), or a list of these. The first one present in the command wins. Positionals declared in the plugin can always be focused, even before they're typed. Flags that aren't in the command are skipped. Without a match, rx starts on the first flag that takes a value.
 
