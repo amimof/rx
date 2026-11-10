@@ -29,6 +29,9 @@ func Apply(cmd *model.Command, sp *spec.Spec, t spec.Transform) error {
 	case "unset":
 		cmd.RemoveKey(target)
 		return nil
+	case "focus":
+		// Moves the editor to the slot; the command is unchanged.
+		return nil
 	}
 	return fmt.Errorf("unknown op %q", t.Op)
 }

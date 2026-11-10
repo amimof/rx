@@ -201,9 +201,9 @@ func TestLiteralValue(t *testing.T) {
 
 func TestTransformAndAddFlag(t *testing.T) {
 	h := newHarness(t, "k get pods -n monitoring", nil)
-	h.keys(alt("A"))
+	h.keys(key(tea.KeyCtrlA))
 	if got := h.m.cmd.Render(); got != "k get pods -A" {
-		t.Fatalf("after M-A = %q", got)
+		t.Fatalf("after ^a = %q", got)
 	}
 	// Tab past the remaining slots to "+ flag" and add --selector.
 	for !h.m.onAddSlot() {
@@ -334,7 +334,7 @@ func (m *Model) selected() string {
 func TestCycleSelectsActiveValue(t *testing.T) {
 	h := newHarness(t, "k get pods -n monitoring", nil)
 	for _, want := range []string{"wide", "yaml"} {
-		h.keys(alt("o"))
+		h.keys(key(tea.KeyCtrlO))
 		if s := h.m.cmd.Slots[h.m.focus]; s.Key != "output" || s.Value != want {
 			t.Fatalf("focused slot = %+v, want output %s", s, want)
 		}
@@ -367,6 +367,99 @@ func TestCycleFillsValuesFromHistory(t *testing.T) {
 	h.keys(alt("N"))
 	if got := h.m.cmd.Render(); got != "k get pods -n monitoring" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// Bare transform keys mean alt+<key>; the plain key types into the search.
+func TestBareTransformKeyIsAlt(t *testing.T) {
+	h := newRegHarness(t, cycleRegistry(t), "k get pods", nil)
+	h.keys(typ("N"))
+	if got := h.m.cmd.Render(); got != "k get pods" || h.m.query != "N" {
+		t.Fatalf("plain N: command %q, query %q", got, h.m.query)
+	}
+	if !strings.Contains(h.m.View(), "M-N cycle namespace") {
+		t.Fatal("help should label the transform M-N")
+	}
+}
+
+func TestCtrlTransformHelp(t *testing.T) {
+	h := newHarness(t, "k get pods -n monitoring", nil)
+	if !strings.Contains(h.m.View(), "^a all namespaces") {
+		t.Fatal("help should label the kubectl toggle ^a")
+	}
+}
+
+func TestFocusTransform(t *testing.T) {
+	for _, tt := range []struct{ line, want string }{
+		{"k get pods -n monitoring", "k get pods my-pod -n monitoring"},
+		{"k get pods old-pod -n monitoring", "k get pods my-pod -n monitoring"},
+		{"k get", "k get my-pod"},
+	} {
+		h := newHarness(t, tt.line, nil)
+		h.keys(key(tea.KeyCtrlG))
+		if s := h.m.cmd.Slots[h.m.focus]; s.Key != "name" || h.m.query != "" {
+			t.Fatalf("%q: focused %s, query %q", tt.line, s.Key, h.m.query)
+		}
+		if got := h.m.cmd.Render(); got != tt.line {
+			t.Fatalf("%q: jumping changed the command to %q", tt.line, got)
+		}
+		h.keys(typ("my-pod"), key(tea.KeyEnter))
+		if got := h.m.cmd.Render(); got != tt.want {
+			t.Errorf("%q: result %q, want %q", tt.line, got, tt.want)
+		}
+	}
+	h := newHarness(t, "k get pods", nil)
+	if !strings.Contains(h.m.View(), "^g jump to name") {
+		t.Fatal("help should label the jump ^g")
+	}
+}
+
+// A value picked on the focused slot is kept when a transform runs, as it
+// is when tabbing away.
+func TestTransformKeepsPickedValue(t *testing.T) {
+	const line = "kubectl get pods control-plane-9nj4j -n capi-system -w -o wide"
+	h := newHarness(t, line, nil)
+	if s := h.m.cmd.Slots[h.m.focus]; s.Key != "namespace" {
+		t.Fatalf("initial focus = %s", s.Key)
+	}
+	h.keys(typ("ksys"), key(tea.KeyCtrlG))
+	if s := h.m.cmd.Slots[h.m.focus]; s.Key != "name" {
+		t.Fatalf("focused %s, want name", s.Key)
+	}
+	h.keys(typ("my-pod"), key(tea.KeyEnter))
+	if got, want := h.m.cmd.Render(), "kubectl get pods my-pod -n kube-system -w -o wide"; got != want {
+		t.Fatalf("ctrl+g: result %q, want %q", got, want)
+	}
+
+	h = newHarness(t, line, nil)
+	h.keys(typ("ksys"), key(tea.KeyCtrlO))
+	if got, want := h.m.cmd.Render(), "kubectl get pods control-plane-9nj4j -n kube-system -w -o yaml"; got != want {
+		t.Fatalf("ctrl+o: result %q, want %q", got, want)
+	}
+}
+
+// A focus transform adds the slot if the command doesn't have it.
+func TestFocusTransformAddsSlot(t *testing.T) {
+	sp, err := spec.Parse([]byte(`
+match: { command: kubectl, aliases: [k] }
+flags:
+  - { name: selector, short: l, takes: value }
+transforms:
+  - { key: ctrl+g, op: focus, flag: selector }
+`), "focus.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := spec.NewRegistry()
+	reg.Add(sp)
+	h := newRegHarness(t, reg, "k get pods", nil)
+	h.keys(key(tea.KeyCtrlG))
+	if s := h.m.cmd.Slots[h.m.focus]; s.Key != "selector" {
+		t.Fatalf("focused %s", s.Key)
+	}
+	h.keys(typ("app=web"), key(tea.KeyEnter))
+	if got := h.m.cmd.Render(); got != "k get pods -l app=web" {
+		t.Fatalf("result %q", got)
 	}
 }
 
