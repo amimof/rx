@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -106,6 +107,32 @@ func TestPrompt(t *testing.T) {
 	}
 }
 
+func TestTheme(t *testing.T) {
+	dir := home(t)
+	c, err := Load("")
+	if err != nil || !reflect.DeepEqual(c.Theme, tui.DefaultTheme()) {
+		t.Fatalf("default theme %v, err %v", c.Theme, err)
+	}
+	write(t, filepath.Join(dir, "rx", "config.yaml"), `
+theme:
+  flag: "#5f87ff"
+  arg: 13
+  sel: { fg: "#fa0", bg: 236, bold: false, underline: true }
+  border: {}
+`)
+	if c, err = Load(""); err != nil {
+		t.Fatal(err)
+	}
+	want := tui.DefaultTheme()
+	want[tui.RoleFlag] = tui.Style{Fg: "#5f87ff"}
+	want[tui.RoleArg] = tui.Style{Fg: "13"}
+	want[tui.RoleSel] = tui.Style{Fg: "#fa0", Bg: "236", Underline: true}
+	want[tui.RoleBorder] = tui.Style{}
+	if !reflect.DeepEqual(c.Theme, want) {
+		t.Fatalf("theme = %v\nwant    %v", c.Theme, want)
+	}
+}
+
 func TestExplicitFile(t *testing.T) {
 	dir := home(t)
 	f := filepath.Join(dir, "other.yaml")
@@ -127,6 +154,13 @@ func TestInvalid(t *testing.T) {
 		{"keys: { drop: [ctrl+e] }\n", "bound to both"},
 		{"keys: { yank: [ctrl+y] }\n", `unknown action "yank"`},
 		{"key: [\n", "config"},
+		{"theme: { nope: '1' }\n", `theme: unknown role "nope"`},
+		{"theme: { flag: { colour: '1' } }\n", `theme.flag: unknown attribute "colour"`},
+		{"theme: { flag: { bold: yes-please } }\n", "theme.flag: bold: want true or false"},
+		{"theme: { flag: red }\n", `theme.flag.fg: invalid color "red"`},
+		{"theme: { arg: { bg: 256 } }\n", `theme.arg.bg: invalid color "256"`},
+		{"theme: { arg: [1] }\n", "theme.arg: want a color or a map"},
+		{"theme: dark\n", "theme: want a map of roles"},
 	} {
 		dir := home(t)
 		write(t, filepath.Join(dir, "rx", "config.yaml"), tt.yaml)

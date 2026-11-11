@@ -38,6 +38,9 @@ type Options struct {
 	Keys Keymap
 	// Prompt is shown before the command; empty shows none.
 	Prompt string
+	// Theme styles the editor; roles it doesn't mention, or all of them
+	// if nil, use DefaultTheme.
+	Theme Theme
 }
 
 // Outcome is the result of an editing session.
@@ -55,7 +58,7 @@ func Run(o Options) (Outcome, error) {
 
 func run(o Options, in io.Reader, out io.Writer) (Outcome, error) {
 	r := lipgloss.NewRenderer(out)
-	m := newModel(o, newStyles(r))
+	m := newModel(o, newStyles(r, o.Theme))
 	p := tea.NewProgram(m, tea.WithInput(in), tea.WithOutput(out))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -70,27 +73,30 @@ func run(o Options, in io.Reader, out io.Writer) (Outcome, error) {
 }
 
 type styles struct {
-	focus, dim, sel, src, err, key lipgloss.Style
+	focus, dim, sel, err lipgloss.Style
 	// Slot parts in the preview: the command word, flag names, flag values
 	// and positional arguments.
 	head, flag, value, arg lipgloss.Style
 	border, prompt         lipgloss.Style
 }
 
-func newStyles(r *lipgloss.Renderer) styles {
+// newStyles draws t with r. Roles t doesn't mention use DefaultTheme.
+func newStyles(r *lipgloss.Renderer, t Theme) styles {
+	th := DefaultTheme()
+	for role, s := range t {
+		th[role] = s
+	}
 	return styles{
-		focus:  r.NewStyle().Reverse(true),
-		dim:    r.NewStyle().Faint(true),
-		sel:    r.NewStyle().Bold(true).Foreground(lipgloss.Color("6")),
-		src:    r.NewStyle().Faint(true).Italic(true),
-		err:    r.NewStyle().Foreground(lipgloss.Color("1")),
-		key:    r.NewStyle().Bold(true),
-		head:   r.NewStyle().Bold(true),
-		flag:   r.NewStyle().Foreground(lipgloss.Color("4")),
-		value:  r.NewStyle().Foreground(lipgloss.Color("2")),
-		arg:    r.NewStyle().Foreground(lipgloss.Color("5")),
-		border: r.NewStyle().Faint(true),
-		prompt: r.NewStyle().Bold(true),
+		focus:  th[RoleFocus].style(r),
+		dim:    th[RoleDim].style(r),
+		sel:    th[RoleSel].style(r),
+		err:    th[RoleErr].style(r),
+		head:   th[RoleHead].style(r),
+		flag:   th[RoleFlag].style(r),
+		value:  th[RoleValue].style(r),
+		arg:    th[RoleArg].style(r),
+		border: th[RoleBorder].style(r),
+		prompt: th[RolePrompt].style(r),
 	}
 }
 

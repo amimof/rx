@@ -31,6 +31,9 @@ type Config struct {
 	// Keys binds the editor's actions. Actions the file doesn't mention
 	// keep their defaults.
 	Keys tui.Keymap
+	// Theme styles the editor. Roles the file doesn't mention keep their
+	// defaults.
+	Theme tui.Theme
 	// File is the config file that was read, or "" if there was none.
 	File string
 }
@@ -72,7 +75,7 @@ func Load(file string) (*Config, error) {
 		_ = v.BindEnv(s, envName(s))
 	}
 
-	c := &Config{Key: DefaultKey, Prompt: tui.DefaultPrompt, Keys: defaults}
+	c := &Config{Key: DefaultKey, Prompt: tui.DefaultPrompt, Keys: defaults, Theme: tui.DefaultTheme()}
 	if err := v.ReadInConfig(); err == nil {
 		c.File = file
 	} else if explicit || !errors.Is(err, fs.ErrNotExist) {
@@ -98,7 +101,88 @@ func Load(file string) (*Config, error) {
 	if err := c.Keys.Validate(); err != nil {
 		return nil, fmt.Errorf("config %s: %w", file, err)
 	}
+	if v.IsSet("theme") {
+		if err := loadTheme(c.Theme, v.Get("theme")); err != nil {
+			return nil, fmt.Errorf("config %s: %w", file, err)
+		}
+	}
+	if err := c.Theme.Validate(); err != nil {
+		return nil, fmt.Errorf("config %s: %w", file, err)
+	}
 	return c, nil
+}
+
+// loadTheme sets the roles in v, the file's theme section, in t. A role is
+// a map of attributes, or a string that sets only its foreground color.
+func loadTheme(t tui.Theme, v any) error {
+	roles, ok := v.(map[string]any)
+	if !ok {
+		return fmt.Errorf("theme: want a map of roles, got %T", v)
+	}
+	names := make([]string, 0, len(roles))
+	for r := range roles {
+		names = append(names, r)
+	}
+	sort.Strings(names)
+	for _, r := range names {
+		if _, ok := t[r]; !ok {
+			return fmt.Errorf("theme: unknown role %q", r)
+		}
+		s, err := themeStyle(roles[r])
+		if err != nil {
+			return fmt.Errorf("theme.%s: %w", r, err)
+		}
+		t[r] = s
+	}
+	return nil
+}
+
+func themeStyle(v any) (tui.Style, error) {
+	var s tui.Style
+	switch v := v.(type) {
+	case nil:
+		return s, nil
+	case string:
+		s.Fg = v
+		return s, nil
+	case int:
+		s.Fg = fmt.Sprint(v)
+		return s, nil
+	case map[string]any:
+		for attr, x := range v {
+			if attr == "fg" || attr == "bg" {
+				c := fmt.Sprint(x)
+				if attr == "fg" {
+					s.Fg = c
+				} else {
+					s.Bg = c
+				}
+				continue
+			}
+			var flag *bool
+			switch attr {
+			case "bold":
+				flag = &s.Bold
+			case "italic":
+				flag = &s.Italic
+			case "faint":
+				flag = &s.Faint
+			case "underline":
+				flag = &s.Underline
+			case "reverse":
+				flag = &s.Reverse
+			default:
+				return s, fmt.Errorf("unknown attribute %q", attr)
+			}
+			b, ok := x.(bool)
+			if !ok {
+				return s, fmt.Errorf("%s: want true or false, got %v", attr, x)
+			}
+			*flag = b
+		}
+		return s, nil
+	}
+	return s, fmt.Errorf("want a color or a map of attributes, got %v", v)
 }
 
 // checkKnown reports settings in the file that rx doesn't know.
@@ -106,7 +190,8 @@ func checkKnown(v *viper.Viper, actions tui.Keymap) error {
 	keys := v.AllKeys()
 	sort.Strings(keys)
 	for _, k := range keys {
-		if k == "key" || k == "log" || k == "prompt" || k == "keys" {
+		// The theme section is checked as it is loaded.
+		if k == "key" || k == "log" || k == "prompt" || k == "keys" || k == "theme" || strings.HasPrefix(k, "theme.") {
 			continue
 		}
 		a, ok := strings.CutPrefix(k, "keys.")
