@@ -25,6 +25,9 @@ type Config struct {
 	Key string
 	// Log is the widget's log file (RX_LOG); empty for the widget default.
 	Log string
+	// Prompt is the symbol shown before the command in the editor
+	// (RX_PROMPT); empty shows none.
+	Prompt string
 	// Keys binds the editor's actions. Actions the file doesn't mention
 	// keep their defaults.
 	Keys tui.Keymap
@@ -61,7 +64,7 @@ func Load(file string) (*Config, error) {
 	v.SetConfigFile(file)
 	v.SetConfigType("yaml")
 	defaults := tui.DefaultKeys()
-	settings := []string{"key", "log"}
+	settings := []string{"key", "log", "prompt"}
 	for a := range defaults {
 		settings = append(settings, "keys."+a)
 	}
@@ -69,7 +72,7 @@ func Load(file string) (*Config, error) {
 		_ = v.BindEnv(s, envName(s))
 	}
 
-	c := &Config{Key: DefaultKey, Keys: defaults}
+	c := &Config{Key: DefaultKey, Prompt: tui.DefaultPrompt, Keys: defaults}
 	if err := v.ReadInConfig(); err == nil {
 		c.File = file
 	} else if explicit || !errors.Is(err, fs.ErrNotExist) {
@@ -83,6 +86,9 @@ func Load(file string) (*Config, error) {
 	}
 	if v.IsSet("log") {
 		c.Log = expandHome(v.GetString("log"))
+	}
+	if v.IsSet("prompt") {
+		c.Prompt = v.GetString("prompt")
 	}
 	for a := range defaults {
 		if k := "keys." + a; v.IsSet(k) {
@@ -100,7 +106,7 @@ func checkKnown(v *viper.Viper, actions tui.Keymap) error {
 	keys := v.AllKeys()
 	sort.Strings(keys)
 	for _, k := range keys {
-		if k == "key" || k == "log" || k == "keys" {
+		if k == "key" || k == "log" || k == "prompt" || k == "keys" {
 			continue
 		}
 		a, ok := strings.CutPrefix(k, "keys.")

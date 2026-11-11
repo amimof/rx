@@ -114,8 +114,9 @@ func keyLabel(key string) string {
 	return key
 }
 
-// help returns the help line for the editor's own keys.
-func (k Keymap) help() string {
+// helpItems returns the help line's entries for the editor's own keys,
+// e.g. "^e run".
+func (k Keymap) helpItems() []string {
 	var parts []string
 	add := func(desc string, actions ...string) {
 		var ls []string
@@ -139,5 +140,5 @@ func (k Keymap) help() string {
 	add("source", ActSource)
 	add("drop", ActDrop)
 	add("cancel", ActBack)
-	return strings.Join(parts, " · ")
+	return parts
 }

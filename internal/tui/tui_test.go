@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -12,9 +13,11 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/amimof/rx/internal/engine"
 	"github.com/amimof/rx/internal/history"
+	"github.com/amimof/rx/internal/model"
 	"github.com/amimof/rx/internal/parse"
 	"github.com/amimof/rx/internal/spec"
 	"github.com/amimof/rx/plugins"
@@ -611,5 +614,58 @@ func TestHistoryRanksFirst(t *testing.T) {
 	r := h.m.rows[0]
 	if r.value != "monitoring" || strings.Join(r.sources, ",") != "history,cobra" {
 		t.Fatalf("first row = %+v", r)
+	}
+}
+
+func TestViewBox(t *testing.T) {
+	for _, width := range []int{80, 40} {
+		h := newHarness(t, "k get pods -n monitoring -o wide --selector app=a-very-long-label-value", nil)
+		h.m.width = width
+		lines := strings.Split(h.m.View(), "\n")
+		for i, l := range lines {
+			if w := ansi.StringWidth(l); w != width {
+				t.Errorf("width %d: line %d is %d wide: %q", width, i, w, l)
+			}
+		}
+		last := len(lines) - 1
+		if !strings.HasPrefix(lines[0], "╭") || !strings.HasPrefix(lines[last], "╰") {
+			t.Fatalf("width %d: no border:\n%s", width, h.m.View())
+		}
+		sep := slices.IndexFunc(lines, func(l string) bool { return strings.HasPrefix(l, "├") })
+		if sep < 0 || !strings.Contains(lines[sep+1], "slot") {
+			t.Fatalf("width %d: no separator above the legend:\n%s", width, h.m.View())
+		}
+	}
+}
+
+func TestPreviewPrompt(t *testing.T) {
+	h := newHarness(t, "k get pods -n monitoring", nil)
+	if p := h.m.preview(); !strings.HasPrefix(p, "k get") {
+		t.Fatalf("no prompt: preview = %q", p)
+	}
+	h.m.o.Prompt = DefaultPrompt
+	if p := h.m.preview(); !strings.HasPrefix(p, DefaultPrompt+" k get") {
+		t.Fatalf("preview = %q", p)
+	}
+}
+
+func TestSlotParts(t *testing.T) {
+	for _, tt := range []struct {
+		s                model.Slot
+		name, sep, value string
+	}{
+		{model.Slot{Kind: model.Flag, Name: "-n", Value: "a b", Dirty: true}, "-n", " ", "'a b'"},
+		{model.Slot{Kind: model.Flag, Name: "--ns", Value: "x", Style: model.Equals, Dirty: true}, "--ns", "=", "x"},
+		{model.Slot{Kind: model.Flag, Name: "-n", Value: "x", Style: model.Attached, Dirty: true}, "-n", "", "x"},
+		{model.Slot{Kind: model.Flag, Name: "-n", Value: "a b", Raw: `-n  "a b"`}, "-n", "  ", `"a b"`},
+		{model.Slot{Kind: model.Flag, Name: "-n", Dirty: true}, "", "", ""},
+		{model.Slot{Kind: model.Bool, Name: "-A", Dirty: true}, "-A", "", ""},
+		{model.Slot{Kind: model.Positional, Value: "pods", Raw: "pods"}, "", "", "pods"},
+		{model.Slot{Kind: model.Positional, Dirty: true}, "", "", ""},
+	} {
+		n, s, v := slotParts(tt.s)
+		if n != tt.name || s != tt.sep || v != tt.value {
+			t.Errorf("%+v: got %q %q %q, want %q %q %q", tt.s, n, s, v, tt.name, tt.sep, tt.value)
+		}
 	}
 }

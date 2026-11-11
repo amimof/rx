@@ -42,7 +42,7 @@ func TestDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Key != DefaultKey || c.Log != "" || c.File != "" {
+	if c.Key != DefaultKey || c.Log != "" || c.File != "" || c.Prompt != tui.DefaultPrompt {
 		t.Fatalf("config = %+v", c)
 	}
 	if !slices.Equal(c.Keys[tui.ActAccept], []string{"enter"}) || !slices.Equal(c.Keys[tui.ActRun], []string{"ctrl+e"}) {
@@ -85,6 +85,24 @@ keys:
 	}
 	if !slices.Equal(c.Keys[tui.ActRun], []string{"ctrl+r"}) {
 		t.Fatalf("env: run %v", c.Keys[tui.ActRun])
+	}
+}
+
+func TestPrompt(t *testing.T) {
+	dir := home(t)
+	write(t, filepath.Join(dir, "rx", "config.yaml"), "prompt: '$'\n")
+	c, err := Load("")
+	if err != nil || c.Prompt != "$" {
+		t.Fatalf("prompt %q, err %v", c.Prompt, err)
+	}
+	// An empty prompt turns the symbol off rather than restoring the default.
+	write(t, filepath.Join(dir, "rx", "config.yaml"), "prompt: ''\n")
+	if c, err = Load(""); err != nil || c.Prompt != "" {
+		t.Fatalf("empty prompt %q, err %v", c.Prompt, err)
+	}
+	t.Setenv("RX_PROMPT", ">")
+	if c, err = Load(""); err != nil || c.Prompt != ">" {
+		t.Fatalf("env prompt %q, err %v", c.Prompt, err)
 	}
 }
 
