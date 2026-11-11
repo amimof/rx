@@ -14,6 +14,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/sahilm/fuzzy"
 
 	"github.com/amimof/rx/internal/engine"
@@ -35,6 +36,8 @@ type Options struct {
 	TTY     *os.File
 	// Keys binds the editor's actions; nil uses DefaultKeys.
 	Keys Keymap
+	// Prompt is shown before the command; empty shows none.
+	Prompt string
 }
 
 // Outcome is the result of an editing session.
@@ -68,18 +71,31 @@ func run(o Options, in io.Reader, out io.Writer) (Outcome, error) {
 
 type styles struct {
 	focus, dim, sel, src, err, key lipgloss.Style
+	// Slot parts in the preview: the command word, flag names, flag values
+	// and positional arguments.
+	head, flag, value, arg lipgloss.Style
+	border, prompt         lipgloss.Style
 }
 
 func newStyles(r *lipgloss.Renderer) styles {
 	return styles{
-		focus: r.NewStyle().Reverse(true),
-		dim:   r.NewStyle().Faint(true),
-		sel:   r.NewStyle().Bold(true).Foreground(lipgloss.Color("6")),
-		src:   r.NewStyle().Faint(true).Italic(true),
-		err:   r.NewStyle().Foreground(lipgloss.Color("1")),
-		key:   r.NewStyle().Bold(true),
+		focus:  r.NewStyle().Reverse(true),
+		dim:    r.NewStyle().Faint(true),
+		sel:    r.NewStyle().Bold(true).Foreground(lipgloss.Color("6")),
+		src:    r.NewStyle().Faint(true).Italic(true),
+		err:    r.NewStyle().Foreground(lipgloss.Color("1")),
+		key:    r.NewStyle().Bold(true),
+		head:   r.NewStyle().Bold(true),
+		flag:   r.NewStyle().Foreground(lipgloss.Color("4")),
+		value:  r.NewStyle().Foreground(lipgloss.Color("2")),
+		arg:    r.NewStyle().Foreground(lipgloss.Color("5")),
+		border: r.NewStyle().Faint(true),
+		prompt: r.NewStyle().Bold(true),
 	}
 }
+
+// DefaultPrompt is the symbol shown before the command.
+const DefaultPrompt = "❯"
 
 type updateMsg engine.Update
 
@@ -702,18 +718,19 @@ func (m *Model) flagTakesValue(name string) bool {
 	return true
 }
 
-// View renders the editor.
+// View renders the editor in a box, with the key legend below a separator.
 func (m *Model) View() string {
 	if m.quitting {
 		return ""
 	}
-	var b strings.Builder
-	b.WriteString(m.preview())
-	b.WriteByte('\n')
+	w := m.innerWidth()
+	body := strings.Split(ansi.Wrap(m.preview(), w, ""), "\n")
 
 	label := "+ flag"
+	ls := m.st.flag
 	if !m.onAddSlot() {
-		label = m.cmd.Slots[m.focus].Label
+		s := m.cmd.Slots[m.focus]
+		label, ls = s.Label, m.kindStyle(s.Kind)
 	}
 	if m.active != "" {
 		label += " [" + m.active + "]"
@@ -725,27 +742,54 @@ func (m *Model) View() string {
 	case m.loading:
 		status = m.st.dim.Render(" loading…")
 	}
-	fmt.Fprintf(&b, "%s %s▏%s\n", m.st.key.Render(label+":"), m.query, status)
+	body = append(body, fmt.Sprintf("%s %s▏%s", ls.Bold(true).Render(label+":"), m.query, status))
 
 	start := 0
 	if m.sel >= listHeight {
 		start = m.sel - listHeight + 1
 	}
 	for i := start; i < len(m.rows) && i < start+listHeight; i++ {
-		b.WriteString(m.renderRow(i))
-		b.WriteByte('\n')
+		body = append(body, m.renderRow(i))
 	}
 	if len(m.rows) == 0 && !m.loading {
-		b.WriteString(m.st.dim.Render("  (no candidates, type a value)") + "\n")
+		body = append(body, m.st.dim.Render("  (no candidates, type a value)"))
 	}
 	if m.message != "" {
-		b.WriteString(m.st.dim.Render("  "+firstLine(m.message)) + "\n")
+		body = append(body, m.st.dim.Render("  "+firstLine(m.message)))
 	}
 	if m.errText != "" {
-		b.WriteString(m.st.err.Render("  "+firstLine(m.errText)) + "\n")
+		body = append(body, m.st.err.Render("  "+firstLine(m.errText)))
 	}
-	b.WriteString(m.help())
-	return b.String()
+	return m.box(body, m.legend(w))
+}
+
+// innerWidth is the width of the text inside the box.
+func (m *Model) innerWidth() int {
+	return max(m.width-4, 10)
+}
+
+// box draws a rounded border around body and legend, with a separator
+// joined to the border between them. Lines are padded or truncated to fit.
+func (m *Model) box(body, legend []string) string {
+	w := m.innerWidth()
+	bar := strings.Repeat("─", w+2)
+	side := m.st.border.Render("│")
+	line := func(s string) string {
+		s = ansi.Truncate(s, w, "…")
+		return side + " " + s + strings.Repeat(" ", max(w-ansi.StringWidth(s), 0)) + " " + side
+	}
+	out := []string{m.st.border.Render("╭" + bar + "╮")}
+	for _, s := range body {
+		out = append(out, line(s))
+	}
+	if len(legend) > 0 {
+		out = append(out, m.st.border.Render("├"+bar+"┤"))
+		for _, s := range legend {
+			out = append(out, line(s))
+		}
+	}
+	out = append(out, m.st.border.Render("╰"+bar+"╯"))
+	return strings.Join(out, "\n")
 }
 
 func (m *Model) renderRow(i int) string {
@@ -765,42 +809,100 @@ func (m *Model) renderRow(i int) string {
 		extra = strings.TrimSpace(extra + "  [" + strings.Join(r.sources, ",") + "]")
 	}
 	if extra != "" {
-		line += "  " + m.st.dim.Render(truncate(extra, max(m.width-lipgloss.Width(line)-4, 10)))
+		line += "  " + m.st.dim.Render(truncate(extra, max(m.innerWidth()-lipgloss.Width(line)-2, 10)))
 	}
 	return line
 }
 
-// preview renders the command with the selected candidate applied and the
-// focused slot highlighted.
+// kindStyle is the color of a slot of kind k in the preview.
+func (m *Model) kindStyle(k model.Kind) lipgloss.Style {
+	if k == model.Positional {
+		return m.st.arg
+	}
+	return m.st.flag
+}
+
+// preview renders the command with the selected candidate applied, slots
+// colored by kind and the focused slot highlighted.
 func (m *Model) preview() string {
-	parts := []string{m.st.dim.Render(m.cmd.Head.Raw)}
+	parts := []string{m.st.head.Render(m.cmd.Head.Raw)}
 	for i, s := range m.cmd.Slots {
-		if i == m.focus && m.sel >= 0 && m.sel < len(m.rows) {
+		focused := i == m.focus
+		if focused && m.sel >= 0 && m.sel < len(m.rows) {
 			s.Value, s.Dirty = m.rows[m.sel].value, true
 		}
-		r := s.Render()
-		if i == m.focus {
-			if r == "" {
-				r = "<" + s.Label + ">"
+		name, sep, val := slotParts(s)
+		if name+sep+val == "" {
+			if focused {
+				parts = append(parts, m.kindStyle(s.Kind).Reverse(true).Render("<"+s.Label+">"))
 			}
-			r = m.st.focus.Render(r)
+			continue
 		}
-		if r != "" {
-			parts = append(parts, r)
-		}
+		parts = append(parts, m.renderSlot(s.Kind, name, sep, val, focused))
 	}
 	if m.onAddSlot() {
 		v := "+flag"
 		if m.sel >= 0 && m.sel < len(m.rows) {
 			v = m.rows[m.sel].value
 		}
-		parts = append(parts, m.st.focus.Render(v))
+		parts = append(parts, m.st.flag.Reverse(true).Render(v))
 	}
-	return strings.Join(parts, " ")
+	line := strings.Join(parts, " ")
+	if m.o.Prompt != "" {
+		line = m.st.prompt.Render(m.o.Prompt) + " " + line
+	}
+	return line
 }
 
-func (m *Model) help() string {
-	h := m.keys.help()
+// renderSlot colors a slot's flag name and value, reversed if focused.
+func (m *Model) renderSlot(k model.Kind, name, sep, val string, focused bool) string {
+	ns, vs, ss := m.st.flag, m.st.value, lipgloss.NewStyle()
+	if k == model.Positional {
+		vs = m.st.arg
+	}
+	if focused {
+		ns, vs, ss = ns.Reverse(true), vs.Reverse(true), m.st.focus
+	}
+	var out string
+	if name != "" {
+		out += ns.Render(name)
+	}
+	if sep != "" {
+		out += ss.Render(sep)
+	}
+	if val != "" {
+		out += vs.Render(val)
+	}
+	return out
+}
+
+// slotParts splits a slot's rendered text into the flag name, the
+// separator ("=", spaces or nothing) and the value. Positionals have only a
+// value and bool flags only a name. Text that doesn't start with the flag's
+// name is returned whole as the name.
+func slotParts(s model.Slot) (name, sep, value string) {
+	r := s.Render()
+	switch {
+	case r == "":
+		return "", "", ""
+	case s.Kind == model.Positional:
+		return "", "", r
+	case s.Kind == model.Bool, s.Name == "", !strings.HasPrefix(r, s.Name):
+		return r, "", ""
+	}
+	rest := r[len(s.Name):]
+	if strings.HasPrefix(rest, "=") {
+		sep = "="
+	} else {
+		sep = rest[:len(rest)-len(strings.TrimLeft(rest, " \t"))]
+	}
+	return s.Name, sep, rest[len(sep):]
+}
+
+// helpGroups returns the legend items: the editor's keys, then the
+// plugin's shortcuts.
+func (m *Model) helpGroups() [][]string {
+	groups := [][]string{m.keys.helpItems()}
 	if m.sp != nil {
 		var ts []string
 		for _, t := range m.sp.Transforms {
@@ -811,10 +913,42 @@ func (m *Model) help() string {
 			ts = append(ts, keyLabel(t.Binding())+" "+d)
 		}
 		if len(ts) > 0 {
-			h += "\n" + strings.Join(ts, " · ")
+			groups = append(groups, ts)
 		}
 	}
-	return m.st.dim.Render(h)
+	return groups
+}
+
+func (m *Model) help() string {
+	var lines []string
+	for _, g := range m.helpGroups() {
+		lines = append(lines, strings.Join(g, " · "))
+	}
+	return m.st.dim.Render(strings.Join(lines, "\n"))
+}
+
+// legend returns the help items packed into lines of at most w columns,
+// breaking only between items. Each group starts a new line.
+func (m *Model) legend(w int) []string {
+	var out []string
+	for _, g := range m.helpGroups() {
+		cur := ""
+		for _, it := range g {
+			switch {
+			case cur == "":
+				cur = it
+			case ansi.StringWidth(cur+" · "+it) <= w:
+				cur += " · " + it
+			default:
+				out = append(out, m.st.dim.Render(cur))
+				cur = it
+			}
+		}
+		if cur != "" {
+			out = append(out, m.st.dim.Render(cur))
+		}
+	}
+	return out
 }
 
 func firstLine(s string) string {

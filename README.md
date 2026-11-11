@@ -81,6 +81,7 @@ rx reads `~/.config/rx/config.yaml` (or `$XDG_CONFIG_HOME/rx/config.yaml`, or th
 ```yaml
 key: "^X^X"                # key that opens rx, in zsh bindkey syntax
 log: ~/.cache/rx/rx.log    # widget log file
+prompt: "❯"                # symbol before the command in the editor; "" for none
 keys:                      # editor keys; a list replaces that action's defaults
   accept:    [enter]
   run:       [ctrl+e]       # accept, then run the command
@@ -97,7 +98,7 @@ keys:                      # editor keys; a list replaces that action's defaults
 
 Keys are named like `ctrl+e`, `alt+y`, `shift+tab`, `enter`, `esc`, `up`. An empty list (`drop: []`) unbinds an action. Single characters and space can't be bound, since they type into the search. Run `rx doctor` to check the file.
 
-Environment variables override the file: `RX_KEY`, `RX_LOG`, and `RX_KEYS_<ACTION>` with a comma-separated list, e.g. `RX_KEYS_NEXT_SLOT=tab,ctrl+f`.
+Environment variables override the file: `RX_KEY`, `RX_LOG`, `RX_PROMPT`, and `RX_KEYS_<ACTION>` with a comma-separated list, e.g. `RX_KEYS_NEXT_SLOT=tab,ctrl+f`.
 
 `key` and `log` are baked into the widget by `rx init zsh`, so changes take effect in new shells. To use a different key than Ctrl-X Ctrl-X without the config file, set `RX_KEY` before the `eval` line, or call `rx-bind` after it. The default replaces zsh's `exchange-point-and-mark` binding in emacs mode; pick another key if you use it.
 
