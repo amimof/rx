@@ -38,6 +38,14 @@ finish() {
   drain
   print -rn -- "$seen" > $dir/transcript
   zpty -d z 2>/dev/null
+  # zpty -d hangs up the shell without waiting for it. Wait until it has
+  # exited (the rc file writes its pid), so it is done writing to <dir>,
+  # e.g. bash saving its history on SIGHUP, before the test removes it.
+  local pid end=$(( EPOCHREALTIME + 2 ))
+  [[ -r $dir/pid ]] && pid=$(<$dir/pid)
+  while [[ -n $pid ]] && kill -0 $pid 2>/dev/null && (( EPOCHREALTIME < end )); do
+    sleep 0.02
+  done
   exit $1
 }
 

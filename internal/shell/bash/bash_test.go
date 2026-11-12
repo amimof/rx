@@ -33,6 +33,8 @@ func TestScript(t *testing.T) {
 // bashrc sets up fixture commands and completion specs. %[1]s is the test
 // directory, %[2]s the rx binary and %[3]s the widget script.
 const bashrc = `
+# The driver waits for this pid to exit before the test removes the dir.
+echo $$ > %[1]s/pid
 stty rows 30 cols 120
 PS1='> '
 HISTFILE=%[1]s/hist
@@ -555,8 +557,8 @@ func buildRx(t *testing.T) string {
 }
 
 // TestWidgetEndToEnd drives the real rx binary: open the editor on
-// "fixture b", fuzzy-pick alpha from the shell's completion, accept, and
-// run with Ctrl-E.
+// "fixture b", filter the shell's completion to alpha and pick it with
+// Ctrl-N, accept, and run with Ctrl-E.
 func TestWidgetEndToEnd(t *testing.T) {
 	newShell(t, "") // skip early without bash or zsh
 	bin := buildRx(t)
@@ -570,6 +572,7 @@ func TestWidgetEndToEnd(t *testing.T) {
 	steps := append(typeAndEdit("fixture b"),
 		"expect:alpha", // the shell's completion reached the editor
 		"key:alp",
+		"key:\x0e", // typing selects only an exact match; Ctrl-N picks alpha
 		"expect:alpha",
 		"key:\r",
 	)
@@ -580,7 +583,7 @@ func TestWidgetEndToEnd(t *testing.T) {
 
 	// Ctrl-E accepts and runs.
 	s = setup()
-	s.run(append(typeAndEdit("fixture b"), "expect:alpha", "key:alp", "expect:alpha", "key:\x05", "file:"+filepath.Join(s.dir, "ran"))...)
+	s.run(append(typeAndEdit("fixture b"), "expect:alpha", "key:alp", "key:\x0e", "expect:alpha", "key:\x05", "file:"+filepath.Join(s.dir, "ran"))...)
 	if got := s.read("ran"); got != "fixture alpha\n" {
 		t.Errorf("after Ctrl-E ran %q", got)
 	}

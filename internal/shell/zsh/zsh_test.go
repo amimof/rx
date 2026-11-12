@@ -32,6 +32,8 @@ func TestScript(t *testing.T) {
 // zshrc sets up fixture commands and completion functions. %[1]s is the
 // test directory, %[2]s the rx binary and %[3]s the widget script.
 const zshrc = `
+# The driver waits for this pid to exit before the test removes the dir.
+print $$ > %[1]s/pid
 stty rows 30 cols 120
 PS1='> '
 HISTFILE=%[1]s/hist
@@ -371,7 +373,8 @@ func TestWidgetErrorMessages(t *testing.T) {
 }
 
 // TestWidgetEndToEnd drives the real rx binary: open the editor on
-// "fixture b", fuzzy-pick alpha from the shell's completion, accept and run.
+// "fixture b", filter the shell's completion to alpha and pick it with
+// Ctrl-N, accept and run.
 func TestWidgetEndToEnd(t *testing.T) {
 	if _, err := exec.LookPath("zsh"); err != nil {
 		t.Skip("zsh not installed")
@@ -387,6 +390,7 @@ func TestWidgetEndToEnd(t *testing.T) {
 	steps := append(typeAndEdit("fixture b"),
 		"expect:first host", // the shell's completion reached the editor
 		"key:alp",
+		"key:\x0e", // typing selects only an exact match; Ctrl-N picks alpha
 		"expect:alpha",
 		"key:\r",
 	)
