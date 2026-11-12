@@ -16,6 +16,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/charmbracelet/x/cellbuf"
 	"github.com/sahilm/fuzzy"
 
 	"github.com/amimof/rx/internal/engine"
@@ -114,7 +115,6 @@ type row struct {
 	sources []string
 	hist    float64 // frecency score, 0 if not in history
 	order   int     // position in completion output
-	literal bool    // "use typed text"
 	matched []int
 }
 
@@ -155,6 +155,7 @@ type Model struct {
 	ctx       context.Context
 	send      func(engine.Update)
 	width     int
+	height    int // 0 if the terminal didn't report one
 	cancelled bool
 	run       bool
 	quitting  bool
@@ -401,7 +402,8 @@ func (m *Model) merge(value, desc, source string, hist float64, order int) {
 
 // filter recomputes the visible rows from the candidates and query.
 // Without a query, rows are ordered by history frecency, then completion
-// order. With a query, by fuzzy score boosted by frecency.
+// order. With a query, by fuzzy score boosted by frecency, and only an exact
+// match is selected (see typedSel).
 func (m *Model) filter() {
 	all := m.ranked()
 	if m.query == "" {
@@ -421,22 +423,53 @@ func (m *Model) filter() {
 		score float64
 	}
 	ss := make([]scored, 0, len(matches))
-	exact := false
 	for _, mt := range matches {
 		r := all[mt.Index]
 		r.matched = mt.MatchedIndexes
 		ss = append(ss, scored{r, float64(mt.Score) + 10*r.hist})
-		exact = exact || r.value == m.query
 	}
 	sort.SliceStable(ss, func(i, j int) bool { return ss[i].score > ss[j].score })
 	m.rows = m.rows[:0]
 	for _, s := range ss {
 		m.rows = append(m.rows, s.r)
 	}
-	if !exact {
-		m.rows = append(m.rows, row{value: m.query, literal: true})
+	m.sel = m.typedSel()
+}
+
+// typedSel is the row to select for the query: the exact match, else none,
+// so the typed text is the value until the user picks a row. On the
+// "+ flag" slot, where flag names are rarely typed in full, it's the best
+// match.
+func (m *Model) typedSel() int {
+	if i := m.rowIndex(m.query); i >= 0 {
+		return i
 	}
-	m.sel = 0
+	if m.onAddSlot() && len(m.rows) > 0 {
+		return 0
+	}
+	return -1
+}
+
+// rowIndex returns the index of the row with value v, or -1.
+func (m *Model) rowIndex(v string) int {
+	return slices.IndexFunc(m.rows, func(r row) bool { return r.value == v })
+}
+
+// selected returns the value of the selected row, or "" if none is.
+func (m *Model) selected() string {
+	if m.sel < 0 || m.sel >= len(m.rows) {
+		return ""
+	}
+	return m.rows[m.sel].value
+}
+
+// value returns what the focused slot is set to on commit: the selected
+// row, else the typed query, else "" to keep the current value.
+func (m *Model) value() string {
+	if v := m.selected(); v != "" {
+		return v
+	}
+	return m.query
 }
 
 // ranked returns the candidates ordered by history frecency, then
@@ -488,6 +521,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Width > 0 {
 			m.width = msg.Width
 		}
+		m.height = msg.Height
 	case updateMsg:
 		if msg.ID != m.reqID {
 			return m, nil
@@ -508,10 +542,13 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.merge(v, c.Desc, msg.Source, 0, i)
 		}
-		keepSel := m.sel
+		keepSel, keepVal := m.sel, m.selected()
 		m.filter()
 		if m.query == "" {
 			m.sel = min(keepSel, len(m.rows)-1)
+		} else if i := m.rowIndex(keepVal); keepVal != "" && i >= 0 {
+			// Keep a row the user browsed to as more candidates arrive.
+			m.sel = i
 		}
 		m.selectPin()
 		if msg.Done && m.cycle != nil && m.cycle.id == msg.ID {
@@ -726,13 +763,13 @@ func (m *Model) selectPin() {
 	}
 }
 
-// commit applies the selected row to the focused slot. It reports whether a
-// flag that takes a value was added and focused.
+// commit applies the selected row, or else the typed query, to the focused
+// slot. It reports whether a flag that takes a value was added and focused.
 func (m *Model) commit() bool {
-	if m.sel < 0 || m.sel >= len(m.rows) {
+	v := m.value()
+	if v == "" {
 		return false
 	}
-	v := m.rows[m.sel].value
 	if m.onAddSlot() {
 		takes := m.flagTakesValue(v)
 		m.focus = transform.AddFlag(m.cmd, m.sp, v, takes)
@@ -765,12 +802,19 @@ func (m *Model) flagTakesValue(name string) bool {
 }
 
 // View renders the editor in a box, with the key legend below a separator.
+// If the terminal is too short for all of it, the list shrinks, then the
+// legend goes, then the preview is clipped around the focused slot.
 func (m *Model) View() string {
 	if m.quitting {
 		return ""
 	}
 	w := m.innerWidth()
-	body := strings.Split(ansi.Wrap(m.preview(), w, ""), "\n")
+	// cellbuf.Wrap, unlike ansi.Wrap, ends each line's styles and restarts
+	// them on the next, so a wrapped slot stays colored and its color
+	// doesn't run into the border.
+	line, focusEnd := m.previewFocus()
+	preview := strings.Split(cellbuf.Wrap(line, w, ""), "\n")
+	focusLine := strings.Count(cellbuf.Wrap(line[:focusEnd], w, ""), "\n")
 
 	label := "+ flag"
 	ls := m.st.flag
@@ -781,29 +825,86 @@ func (m *Model) View() string {
 	if m.active != "" {
 		label += " [" + m.active + "]"
 	}
-	body = append(body, fmt.Sprintf("%s %s▏", ls.Bold(true).Render(label+":"), m.query))
+	search := fmt.Sprintf("%s %s▏", ls.Bold(true).Render(label+":"), m.query)
 
-	start := 0
-	if m.sel >= listHeight {
-		start = m.sel - listHeight + 1
-	}
-	for i := start; i < len(m.rows) && i < start+listHeight; i++ {
-		body = append(body, m.renderRow(i))
-	}
+	var status []string
 	switch {
 	case m.loading:
 		// Also shown over cached candidates while they are refreshed.
-		body = append(body, "  "+m.spin.View())
+		status = append(status, "  "+m.spin.View())
 	case len(m.rows) == 0:
-		body = append(body, m.st.dim.Render("  (no candidates, type a value)"))
+		status = append(status, m.st.dim.Render("  (no candidates, type a value)"))
 	}
 	if m.message != "" {
-		body = append(body, m.st.dim.Render("  "+firstLine(m.message)))
+		status = append(status, m.st.dim.Render("  "+firstLine(m.message)))
 	}
 	if m.errText != "" {
-		body = append(body, m.st.err.Render("  "+firstLine(m.errText)))
+		status = append(status, m.st.err.Render("  "+firstLine(m.errText)))
 	}
-	return m.box(body, m.legend(w))
+
+	legend := m.legend(w)
+	// The borders, the search line and the status are always shown.
+	np, nr, nl := m.fit(len(preview), min(len(m.rows), listHeight), len(legend), 3+len(status))
+
+	body := window(preview, np, focusLine, w)
+	body = append(body, search)
+	start := 0
+	if m.sel >= nr {
+		start = m.sel - nr + 1
+	}
+	for i := start; i < len(m.rows) && i < start+nr; i++ {
+		body = append(body, m.renderRow(i))
+	}
+	body = append(body, status...)
+	return m.box(body, legend[:nl])
+}
+
+// fit returns how many preview lines, list rows and legend lines fit in the
+// terminal height, given that fixed lines are always shown. It shrinks the
+// list to 3 rows, then drops the legend, then shrinks the list to 1 row,
+// then clips the preview, keeping at least a line of it.
+func (m *Model) fit(preview, rows, legend, fixed int) (int, int, int) {
+	if m.height <= 0 {
+		return preview, rows, legend
+	}
+	over := func() int {
+		n := fixed + preview + rows
+		if legend > 0 {
+			n += 1 + legend // and the separator
+		}
+		return n - m.height
+	}
+	shrink := func(floor int) {
+		if o := over(); o > 0 && rows > floor {
+			rows = max(rows-o, floor)
+		}
+	}
+	shrink(min(rows, 3))
+	if over() > 0 {
+		legend = 0
+	}
+	shrink(min(rows, 1))
+	if o := over(); o > 0 {
+		preview = max(preview-o, 1)
+	}
+	return preview, rows, legend
+}
+
+// window returns n of the preview lines, ending at the focused one if they
+// don't all fit. An ellipsis marks the lines left out above and below.
+func window(lines []string, n, focus, w int) []string {
+	if n >= len(lines) {
+		return lines
+	}
+	start := min(max(focus-n+1, 0), len(lines)-n)
+	out := slices.Clone(lines[start : start+n])
+	if start > 0 {
+		out[0] = ansi.TruncateLeft(out[0], 1, "…")
+	}
+	if last := len(out) - 1; start+n < len(lines) {
+		out[last] = ansi.Truncate(out[last], w-1, "") + "…"
+	}
+	return out
 }
 
 // innerWidth is the width of the text inside the box.
@@ -839,9 +940,6 @@ func (m *Model) renderRow(i int) string {
 	r := m.rows[i]
 	cursor := "  "
 	val := r.value
-	if r.literal {
-		val = fmt.Sprintf("use %q", r.value)
-	}
 	if i == m.sel {
 		cursor = m.st.sel.Render("> ")
 		val = m.st.sel.Render(val)
@@ -868,33 +966,48 @@ func (m *Model) kindStyle(k model.Kind) lipgloss.Style {
 // preview renders the command with the selected candidate applied, slots
 // colored by kind and the focused slot highlighted.
 func (m *Model) preview() string {
+	line, _ := m.previewFocus()
+	return line
+}
+
+// previewFocus returns the preview and the byte offset in it where the
+// focused slot ends.
+func (m *Model) previewFocus() (string, int) {
 	parts := []string{m.st.head.Render(m.cmd.Head.Raw)}
+	focusPart := 0
 	for i, s := range m.cmd.Slots {
 		focused := i == m.focus
-		if focused && m.sel >= 0 && m.sel < len(m.rows) {
-			s.Value, s.Dirty = m.rows[m.sel].value, true
+		if v := m.value(); focused && v != "" {
+			s.Value, s.Dirty = v, true
 		}
 		name, sep, val := slotParts(s)
 		if name+sep+val == "" {
 			if focused {
 				parts = append(parts, m.kindStyle(s.Kind).Reverse(true).Render("<"+s.Label+">"))
+				focusPart = len(parts) - 1
 			}
 			continue
 		}
 		parts = append(parts, m.renderSlot(s.Kind, name, sep, val, focused))
+		if focused {
+			focusPart = len(parts) - 1
+		}
 	}
 	if m.onAddSlot() {
 		v := "+flag"
-		if m.sel >= 0 && m.sel < len(m.rows) {
-			v = m.rows[m.sel].value
+		if mv := m.value(); mv != "" {
+			v = mv
 		}
 		parts = append(parts, m.st.flag.Reverse(true).Render(v))
+		focusPart = len(parts) - 1
 	}
 	line := strings.Join(parts, " ")
+	end := len(strings.Join(parts[:focusPart+1], " "))
 	if m.o.Prompt != "" {
-		line = m.st.prompt.Render(m.o.Prompt) + " " + line
+		prompt := m.st.prompt.Render(m.o.Prompt) + " "
+		line, end = prompt+line, len(prompt)+end
 	}
-	return line
+	return line, end
 }
 
 // renderSlot colors a slot's flag name and value, reversed if focused.
