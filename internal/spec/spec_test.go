@@ -168,16 +168,18 @@ func TestValidateComplete(t *testing.T) {
 	for _, tt := range []struct{ backend, err string }{
 		{`""`, ""},
 		{"auto", ""},
-		{"cobra", ""},
+		{"cli", ""},
 		{"shell", ""},
 		{"none", ""},
-		{"[history, spec, provider, cobra, shell]", ""},
+		{"[history, spec, provider, cli, shell]", ""},
 		{"[none]", ""},
 		{"zsh", `unknown source "zsh" (use "shell")`},
 		{"bogus", `unknown source "bogus"`},
-		{"[cobra, bogus]", `unknown source "bogus"`},
-		{"[auto, cobra]", `"auto" can't be combined`},
-		{"[cobra, cobra]", `source "cobra" listed twice`},
+		{"[cli, bogus]", `unknown source "bogus"`},
+		{"[auto, cli]", `"auto" can't be combined`},
+		{"[cli, cli]", `source "cli" listed twice`},
+		{"cobra", `unknown source "cobra" (use "cli")`},
+		{"[clap]", `unknown source "clap" (use "cli")`},
 		{"[]", `empty list of sources (use "none")`},
 	} {
 		s, err := Parse(fmt.Appendf(nil, "match: { command: x }\ncomplete: %s\n", tt.backend), "x.yaml")
@@ -194,8 +196,28 @@ func TestValidateComplete(t *testing.T) {
 	}
 }
 
+func TestValidateCLI(t *testing.T) {
+	for _, tt := range []struct{ cli, err string }{
+		{"cobra", ""},
+		{"clap", ""},
+		{"urfave", `cli: unknown protocol "urfave" (use one of cobra, clap)`},
+	} {
+		s, err := Parse([]byte("match: { command: x }\ncli: "+tt.cli+"\n"), "x.yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		errs := s.Validate()
+		switch {
+		case tt.err == "" && len(errs) > 0:
+			t.Errorf("cli %q: unexpected %v", tt.cli, errs)
+		case tt.err != "" && (len(errs) != 1 || errs[0].Error() != tt.err):
+			t.Errorf("cli %q: errors %v, want %q", tt.cli, errs, tt.err)
+		}
+	}
+}
+
 func TestEnabled(t *testing.T) {
-	all := "cobra,history,provider,shell,spec"
+	all := "cli,history,provider,shell,spec"
 	for _, tt := range []struct {
 		spec, global string
 		want         string
@@ -204,7 +226,7 @@ func TestEnabled(t *testing.T) {
 		{"", "auto", all},
 		{"", "shell", "shell"},
 		{"", "none", ""},
-		{"[cobra, history]", "shell", "cobra,history"},
+		{"[cli, history]", "shell", "cli,history"},
 		{"none", "auto", ""},
 		{"auto", "shell", all},
 	} {
@@ -232,7 +254,7 @@ func TestEnabled(t *testing.T) {
 		}
 	}
 	// A nil spec uses the global sources.
-	if got := (*Spec)(nil).Enabled(Sources{"cobra"}); len(got) != 1 || !got["cobra"] {
+	if got := (*Spec)(nil).Enabled(Sources{"cli"}); len(got) != 1 || !got["cli"] {
 		t.Errorf("nil spec: enabled = %v", got)
 	}
 }
@@ -243,10 +265,10 @@ func TestParseSources(t *testing.T) {
 		want string
 		err  bool
 	}{
-		{"cobra", "cobra", false},
+		{"cli", "cli", false},
 		{"history, shell", "history,shell", false},
 		{"history shell", "history,shell", false},
-		{[]any{"spec", "cobra"}, "spec,cobra", false},
+		{[]any{"spec", "cli"}, "spec,cli", false},
 		{[]string{"shell"}, "shell", false},
 		{nil, "auto", false},
 		{[]any{1}, "", true},

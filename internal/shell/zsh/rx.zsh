@@ -112,21 +112,31 @@ zstyle ':completion:_rx_capture:*' list-prompt ''
 zstyle ':completion:_rx_capture:*' select-prompt ''
 zstyle ':completion:_rx_capture:*' menu no
 
-# INFO <word>: alias expansion, completion function and whether that
-# function is cobra-generated (so rx may call `cmd __complete` directly).
+# INFO <word> [marker...]: alias expansion, completion function and the
+# first marker found in that function. Markers identify functions generated
+# by CLI frameworks rx can call directly (e.g. `cmd __complete` for cobra).
 _rx_info() {
-  local word=$1 exp=${aliases[$1]}
+  local word=$1 exp=${aliases[$1]} m match=
+  shift
   # Split into an array first: subscripting a one-word (z) result directly
   # would index characters.
   local -a ws=(${(z)exp})
   local cmd=${ws[1]:-$word}
-  local fn=${_comps[$cmd]} cobra=0
+  local fn=${_comps[$cmd]}
   if [[ -n $fn ]]; then
     [[ ${functions[$fn]} == *'builtin autoload -X'* ]] && autoload +X $fn 2>/dev/null
-    [[ ${functions[$fn]} == *__complete* ]] && cobra=1
+    for m in "$@"; do
+      # Quoted, so the marker matches literally.
+      if [[ -n $m && ${functions[$fn]} == *"$m"* ]]; then
+        match=$m
+        break
+      fi
+    done
   fi
   _rx_esc "$exp"
-  _rx_reply "I"$'\t'"$REPLY"$'\t'"$fn"$'\t'"$cobra" END
+  local e=$REPLY
+  _rx_esc "$match"
+  _rx_reply "I"$'\t'"$e"$'\t'"$fn"$'\t'"$REPLY" END
 }
 
 # Sends response lines to rx in one write. If rx has exited, the error is
@@ -179,8 +189,8 @@ rx-edit() {
   local -x RX_ALIASES=${(pj:\n:)al}
   local -x RX_HISTFILE=${HISTFILE:-$HOME/.zsh_history}
 
-  local req done=0 ended=0 run=0 err= d= r=
-  local -a f
+  local req done=0 ended=0 run=0 err= d= r= a
+  local -a f iargs
   _rx_w=
   zle -I
   {
@@ -201,7 +211,12 @@ rx-edit() {
       while IFS= read -r -u $r req; do
         f=("${(@ps:\t:)req}")
         case $f[1] in
-          (INFO)     _rx_unesc "$f[2]"; _rx_info "$REPLY" ;;
+          (INFO)
+            iargs=()
+            for a in "${(@)f[2,-1]}"; do
+              _rx_unesc "$a"; iargs+=("$REPLY")
+            done
+            _rx_info "${(@)iargs}" ;;
           (COMPLETE) _rx_unesc "$f[2]"; _rx_complete "$REPLY" ;;
           (DONE)
             _rx_unesc "$f[3]"

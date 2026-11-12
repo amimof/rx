@@ -14,6 +14,8 @@ import (
 	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/amimof/rx/internal/complete/cli"
 )
 
 // Completion sources a command's candidates can come from.
@@ -21,7 +23,9 @@ const (
 	SourceHistory  = "history"
 	SourceSpec     = "spec"
 	SourceProvider = "provider"
-	SourceCobra    = "cobra"
+	// SourceCLI runs the command's own completion through the protocol of
+	// the CLI framework it is built with (cobra, clap).
+	SourceCLI = "cli"
 	// SourceShell asks the shell rx runs under, as <Tab> would.
 	SourceShell = "shell"
 
@@ -32,7 +36,7 @@ const (
 )
 
 // AllSources lists the sources in the order Ctrl-S cycles through them.
-var AllSources = []string{SourceHistory, SourceSpec, SourceProvider, SourceCobra, SourceShell}
+var AllSources = []string{SourceHistory, SourceSpec, SourceProvider, SourceCLI, SourceShell}
 
 // Sources is the list of enabled completion sources. It unmarshals from
 // either a single string or a list. A nil Sources is unset.
@@ -101,6 +105,8 @@ func (s Sources) Validate() []error {
 			}
 		case n == "zsh":
 			errs = append(errs, fmt.Errorf("unknown source %q (use %q)", n, SourceShell))
+		case n == "cobra" || n == "clap":
+			errs = append(errs, fmt.Errorf("unknown source %q (use %q)", n, SourceCLI))
 		case !slices.Contains(AllSources, n):
 			errs = append(errs, fmt.Errorf("unknown source %q", n))
 		}
@@ -153,7 +159,10 @@ type Spec struct {
 	} `yaml:"match"`
 	// Complete lists the enabled completion sources, replacing the global
 	// setting. Unset uses the global setting.
-	Complete    Sources             `yaml:"complete"`
+	Complete Sources `yaml:"complete"`
+	// CLI pins the CLI framework protocol the cli source uses, instead of
+	// detecting it from the shell's completion function.
+	CLI         string              `yaml:"cli"`
 	Flags       []FlagSpec          `yaml:"flags"`
 	Positionals []PosSpec           `yaml:"positionals"`
 	Providers   map[string]Provider `yaml:"providers"`
@@ -343,6 +352,9 @@ func (s *Spec) Validate() []error {
 	}
 	for _, err := range s.Complete.Validate() {
 		add("complete: %v", err)
+	}
+	if s.CLI != "" && cli.Lookup(s.CLI) == nil {
+		add("cli: unknown protocol %q (use one of %s)", s.CLI, strings.Join(cli.Names(), ", "))
 	}
 	seen := map[string]bool{}
 	for _, f := range s.Flags {

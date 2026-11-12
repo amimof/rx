@@ -119,7 +119,7 @@ func TestComplete(t *testing.T) {
 		want spec.Sources
 	}{
 		{"complete: shell\n", spec.Sources{"shell"}},
-		{"complete: [history, cobra]\n", spec.Sources{"history", "cobra"}},
+		{"complete: [history, cli]\n", spec.Sources{"history", "cli"}},
 		{"complete: none\n", spec.Sources{"none"}},
 	} {
 		write(t, filepath.Join(dir, "rx", "config.yaml"), tt.yaml)
