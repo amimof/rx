@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/amimof/rx/internal/complete"
+	"github.com/amimof/rx/internal/config"
 	"github.com/amimof/rx/internal/engine"
 	"github.com/amimof/rx/internal/parse"
 	"github.com/amimof/rx/internal/shell"
@@ -30,6 +31,10 @@ func newCompleteCmd() *cobra.Command {
 
 func runComplete(shellName, slot, buf string) error {
 	sh, err := shell.Resolve(shellName)
+	if err != nil {
+		return err
+	}
+	cfg, err := config.Load(cfgFile)
 	if err != nil {
 		return err
 	}
@@ -58,6 +63,7 @@ func runComplete(shellName, slot, buf string) error {
 		fmt.Printf("slot %s  argv %q  line %q\n", cmd.Slots[focus].Key, req.Argv, req.Line)
 	}
 	eng := engine.New(nil, &complete.Cache{Dir: filepath.Join(cacheDir(), "complete")})
+	eng.Complete = cfg.Complete
 	done := make(chan struct{})
 	eng.Start(context.Background(), 1, cmd, sp, focus, func(u engine.Update) {
 		tag := u.Source

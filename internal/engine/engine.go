@@ -44,6 +44,9 @@ type Engine struct {
 	Cache   *complete.Cache
 	Timeout time.Duration
 	TTL     time.Duration
+	// Complete lists the sources enabled for commands whose spec doesn't
+	// set its own; nil enables all of them.
+	Complete spec.Sources
 
 	cobra    cobra.Backend
 	mu       sync.Mutex
@@ -97,6 +100,7 @@ func (e *Engine) Start(ctx context.Context, id uint64, cmd *model.Command, sp *s
 // returned by Sources. An empty source picks the backend as Start does; a
 // source that isn't available completes with no candidates.
 func (e *Engine) StartFrom(ctx context.Context, id uint64, cmd *model.Command, sp *spec.Spec, focus int, source string, send func(Update)) {
+	en := e.Enabled(sp)
 	var req complete.Request
 	var prov *execBackend
 	var early *Update // delivered instead of running a backend
@@ -108,7 +112,7 @@ func (e *Engine) StartFrom(ctx context.Context, id uint64, cmd *model.Command, s
 		name := providerFor(sp, slot)
 		if slot.Kind == model.Bool {
 			early = &Update{ID: id, Done: true}
-		} else if name != "" && (source == "" || source == "provider:"+name) {
+		} else if name != "" && en[spec.SourceProvider] && (source == "" || source == "provider:"+name) {
 			p := sp.Providers[name]
 			script, err := provider.Render(p, cmd)
 			if err != nil {
@@ -134,10 +138,10 @@ func (e *Engine) StartFrom(ctx context.Context, id uint64, cmd *model.Command, s
 			}
 			j = &job{backend: prov, req: req, ttl: ttl}
 		} else if source != "" {
-			if b := e.forced(source); b != nil {
+			if b := e.forced(source, en); b != nil {
 				j = &job{backend: b, req: req, ttl: e.TTL}
 			}
-		} else if b := e.backendFor(ctx, head, name, sp); b != nil {
+		} else if b := e.backendFor(ctx, head, name, en); b != nil {
 			j = &job{backend: b, req: req, ttl: e.TTL}
 		}
 		if j == nil {
@@ -171,42 +175,48 @@ func (e *Engine) run(ctx context.Context, id uint64, j job, cmdName string, send
 	send(Update{ID: id, Source: src, Result: res, Err: err, Done: true})
 }
 
-// forced returns the cobra or shell backend named source, or nil.
-func (e *Engine) forced(source string) complete.Backend {
+// Enabled returns the sources enabled for sp's command: the spec's own, else
+// the engine's default, else all of them.
+func (e *Engine) Enabled(sp *spec.Spec) map[string]bool {
+	return sp.Enabled(e.Complete)
+}
+
+// forced returns the cobra or shell backend named source if it is enabled,
+// or nil.
+func (e *Engine) forced(source string, en map[string]bool) complete.Backend {
 	switch {
-	case source == e.cobra.Name():
+	case source == e.cobra.Name() && en[spec.SourceCobra]:
 		return &e.cobra
-	case e.Shell != nil && source == e.Shell.Name():
+	case e.Shell != nil && source == e.Shell.Name() && en[spec.SourceShell]:
 		return e.Shell
 	}
 	return nil
 }
 
-// Sources returns the names of the backends that can complete slot focus of
-// cmd (flag names when focus is -1): its provider, cobra and the shell. It
-// never blocks, so cobra is only offered once the spec or a cached INFO says
-// the command is cobra-generated; unknown binaries are never probed.
+// Sources returns the names of the enabled backends that can complete slot
+// focus of cmd (flag names when focus is -1): its provider, cobra and the
+// shell. It never blocks, so with the shell enabled too, cobra is only
+// offered once a cached INFO says the command is cobra-generated; unknown
+// binaries are never probed.
 func (e *Engine) Sources(cmd *model.Command, sp *spec.Spec, focus int) []string {
+	en := e.Enabled(sp)
 	var out []string
 	if focus >= 0 {
 		slot := cmd.Slots[focus]
 		if slot.Kind == model.Bool {
 			return nil
 		}
-		if name := providerFor(sp, slot); name != "" {
+		if name := providerFor(sp, slot); name != "" && en[spec.SourceProvider] {
 			out = append(out, "provider:"+name)
 		}
 	}
-	if sp.Backend() == spec.CompleteNone {
-		return out
-	}
 	e.mu.Lock()
-	cobra := !e.disabled[cmd.Name] && (sp.Backend() == spec.CompleteCobra || e.infos[cmd.Head.Value].Cobra)
+	cobra := en[spec.SourceCobra] && !e.disabled[cmd.Name] && (!en[spec.SourceShell] || e.infos[cmd.Head.Value].Cobra)
 	e.mu.Unlock()
 	if cobra {
 		out = append(out, e.cobra.Name())
 	}
-	if e.Shell != nil {
+	if e.Shell != nil && en[spec.SourceShell] {
 		out = append(out, e.Shell.Name())
 	}
 	return out
@@ -228,28 +238,23 @@ func providerFor(sp *spec.Spec, s model.Slot) string {
 	return ""
 }
 
-// backendFor resolves the backend for a command: the spec's explicit choice,
-// or in auto mode cobra if the shell's completion function for it is
-// cobra-generated, otherwise the shell. Unknown binaries are never probed
-// with __complete.
-func (e *Engine) backendFor(ctx context.Context, head, name string, sp *spec.Spec) complete.Backend {
+// backendFor resolves the backend for a command from the enabled sources:
+// cobra or the shell if only one of them is enabled, or with both, cobra if
+// the shell's completion function for it is cobra-generated, otherwise the
+// shell. Unknown binaries are never probed with __complete.
+func (e *Engine) backendFor(ctx context.Context, head, name string, en map[string]bool) complete.Backend {
 	var sb complete.Backend
-	if e.Shell != nil {
+	if e.Shell != nil && en[spec.SourceShell] {
 		sb = e.Shell
 	}
 	e.mu.Lock()
 	disabled := e.disabled[name]
 	e.mu.Unlock()
-	switch sp.Backend() {
-	case spec.CompleteNone:
-		return nil
-	case spec.CompleteCobra:
-		if disabled {
-			return sb
-		}
-		return &e.cobra
-	case spec.CompleteShell:
+	if !en[spec.SourceCobra] || disabled {
 		return sb
+	}
+	if !en[spec.SourceShell] {
+		return &e.cobra
 	}
 	if e.Shell == nil {
 		return nil
@@ -268,7 +273,7 @@ func (e *Engine) backendFor(ctx context.Context, head, name string, sp *spec.Spe
 		e.infos[head] = info
 		e.mu.Unlock()
 	}
-	if info.Cobra && !disabled {
+	if info.Cobra {
 		return &e.cobra
 	}
 	return sb

@@ -2,6 +2,7 @@ package spec
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -165,15 +166,21 @@ transforms:
 
 func TestValidateComplete(t *testing.T) {
 	for _, tt := range []struct{ backend, err string }{
-		{"", ""},
+		{`""`, ""},
 		{"auto", ""},
 		{"cobra", ""},
 		{"shell", ""},
 		{"none", ""},
-		{"zsh", `unknown backend "zsh" (use "shell")`},
-		{"bogus", `unknown backend "bogus"`},
+		{"[history, spec, provider, cobra, shell]", ""},
+		{"[none]", ""},
+		{"zsh", `unknown source "zsh" (use "shell")`},
+		{"bogus", `unknown source "bogus"`},
+		{"[cobra, bogus]", `unknown source "bogus"`},
+		{"[auto, cobra]", `"auto" can't be combined`},
+		{"[cobra, cobra]", `source "cobra" listed twice`},
+		{"[]", `empty list of sources (use "none")`},
 	} {
-		s, err := Parse(fmt.Appendf(nil, "match: { command: x }\ncomplete: %q\n", tt.backend), "x.yaml")
+		s, err := Parse(fmt.Appendf(nil, "match: { command: x }\ncomplete: %s\n", tt.backend), "x.yaml")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -183,6 +190,71 @@ func TestValidateComplete(t *testing.T) {
 			t.Errorf("complete %q: unexpected %v", tt.backend, errs)
 		case tt.err != "" && (len(errs) != 1 || !strings.Contains(errs[0].Error(), tt.err)):
 			t.Errorf("complete %q: errors %v, want %q", tt.backend, errs, tt.err)
+		}
+	}
+}
+
+func TestEnabled(t *testing.T) {
+	all := "cobra,history,provider,shell,spec"
+	for _, tt := range []struct {
+		spec, global string
+		want         string
+	}{
+		{"", "", all},
+		{"", "auto", all},
+		{"", "shell", "shell"},
+		{"", "none", ""},
+		{"[cobra, history]", "shell", "cobra,history"},
+		{"none", "auto", ""},
+		{"auto", "shell", all},
+	} {
+		y := "match: { command: x }\n"
+		if tt.spec != "" {
+			y += "complete: " + tt.spec + "\n"
+		}
+		s, err := Parse([]byte(y), "x.yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var global Sources
+		if tt.global != "" {
+			if global, err = ParseSources(tt.global); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var got []string
+		for n := range s.Enabled(global) {
+			got = append(got, n)
+		}
+		sort.Strings(got)
+		if g := strings.Join(got, ","); g != tt.want {
+			t.Errorf("spec %q, global %q: enabled = %q, want %q", tt.spec, tt.global, g, tt.want)
+		}
+	}
+	// A nil spec uses the global sources.
+	if got := (*Spec)(nil).Enabled(Sources{"cobra"}); len(got) != 1 || !got["cobra"] {
+		t.Errorf("nil spec: enabled = %v", got)
+	}
+}
+
+func TestParseSources(t *testing.T) {
+	for _, tt := range []struct {
+		in   any
+		want string
+		err  bool
+	}{
+		{"cobra", "cobra", false},
+		{"history, shell", "history,shell", false},
+		{"history shell", "history,shell", false},
+		{[]any{"spec", "cobra"}, "spec,cobra", false},
+		{[]string{"shell"}, "shell", false},
+		{nil, "auto", false},
+		{[]any{1}, "", true},
+		{42, "", true},
+	} {
+		got, err := ParseSources(tt.in)
+		if (err != nil) != tt.err || (!tt.err && got.String() != tt.want) {
+			t.Errorf("ParseSources(%v) = %q, %v", tt.in, got, err)
 		}
 	}
 }

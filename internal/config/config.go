@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/viper"
 
+	"github.com/amimof/rx/internal/spec"
 	"github.com/amimof/rx/internal/tui"
 )
 
@@ -28,6 +29,9 @@ type Config struct {
 	// Prompt is the symbol shown before the command in the editor
 	// (RX_PROMPT); empty shows none.
 	Prompt string
+	// Complete lists the completion sources enabled by default
+	// (RX_COMPLETE). Plugins may replace it; nil enables all of them.
+	Complete spec.Sources
 	// Keys binds the editor's actions. Actions the file doesn't mention
 	// keep their defaults.
 	Keys tui.Keymap
@@ -67,7 +71,7 @@ func Load(file string) (*Config, error) {
 	v.SetConfigFile(file)
 	v.SetConfigType("yaml")
 	defaults := tui.DefaultKeys()
-	settings := []string{"key", "log", "prompt"}
+	settings := []string{"key", "log", "prompt", "complete"}
 	for a := range defaults {
 		settings = append(settings, "keys."+a)
 	}
@@ -92,6 +96,16 @@ func Load(file string) (*Config, error) {
 	}
 	if v.IsSet("prompt") {
 		c.Prompt = v.GetString("prompt")
+	}
+	if v.IsSet("complete") {
+		s, err := spec.ParseSources(v.Get("complete"))
+		if err == nil {
+			err = errors.Join(s.Validate()...)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("config %s: complete: %w", file, err)
+		}
+		c.Complete = s
 	}
 	for a := range defaults {
 		if k := "keys." + a; v.IsSet(k) {
@@ -190,8 +204,9 @@ func checkKnown(v *viper.Viper, actions tui.Keymap) error {
 	keys := v.AllKeys()
 	sort.Strings(keys)
 	for _, k := range keys {
-		// The theme section is checked as it is loaded.
-		if k == "key" || k == "log" || k == "prompt" || k == "keys" || k == "theme" || strings.HasPrefix(k, "theme.") {
+		// The complete and theme sections are checked as they are loaded.
+		if k == "key" || k == "log" || k == "prompt" || k == "keys" ||
+			k == "complete" || strings.HasPrefix(k, "complete.") || k == "theme" || strings.HasPrefix(k, "theme.") {
 			continue
 		}
 		a, ok := strings.CutPrefix(k, "keys.")

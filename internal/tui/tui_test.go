@@ -315,7 +315,7 @@ func TestProgramTabThroughSlots(t *testing.T) {
 
 const cycleSpec = `
 match: { command: kubectl, aliases: [k] }
-complete: cobra
+complete: [history, spec, cobra]
 flags:
   - { name: namespace, short: n, takes: value }
 positionals:
@@ -575,6 +575,43 @@ func TestCycleFromHistorySource(t *testing.T) {
 	h.keys(alt("N"))
 	if got := h.m.cmd.Render(); got != "k get pods -n monitoring" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// Sources the command doesn't enable are neither listed nor offered by
+// Ctrl-S.
+func TestDisabledSources(t *testing.T) {
+	es, _ := history.ReadZsh(strings.NewReader(": 1:0;k get pods -n monitoring -o yaml\n"))
+	reg := spec.NewRegistry()
+	if err := reg.LoadFS(plugins.FS, ""); err != nil {
+		t.Fatal(err)
+	}
+	sp := reg.Lookup("kubectl")
+	x := history.Build(es, spec.Classifier{Specs: reg, Aliases: spec.Aliases{"k": "kubectl"}})
+
+	h := newRegHarness(t, reg, "k get pods -o json", x)
+	h.m.focusSlot("output")
+	h.pump()
+	if got := h.m.sources(h.m.enabledCands()); !slices.Contains(got, "history") || !slices.Contains(got, "spec") {
+		t.Fatalf("sources = %q, want history and spec", got)
+	}
+
+	sp.Complete = spec.Sources{spec.SourceCobra}
+	h.m.refocus()
+	h.pump()
+	if got := h.m.sources(h.m.enabledCands()); !slices.Equal(got, []string{"", "cobra"}) {
+		t.Fatalf("sources = %q, want all and cobra", got)
+	}
+	for _, r := range h.m.rows {
+		for _, s := range r.sources {
+			if s == "history" || s == "spec" {
+				t.Fatalf("row %q from disabled source %s", r.value, s)
+			}
+		}
+	}
+	h.keys(key(tea.KeyCtrlS))
+	if h.m.active != "cobra" {
+		t.Fatalf("ctrl+s: active = %q, want cobra", h.m.active)
 	}
 }
 

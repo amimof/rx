@@ -249,7 +249,7 @@ func (m *Model) load() {
 	m.message, m.errText = "", ""
 	m.reqID++
 
-	hist, vals := m.historyCands(), m.specCands()
+	hist, vals := m.enabledCands()
 	m.active = ""
 	if slices.Contains(m.sources(hist, vals), m.source) {
 		m.active = m.source
@@ -281,6 +281,21 @@ func (m *Model) engineFocus() int {
 		return -1
 	}
 	return m.focus
+}
+
+// enabledCands returns the focused slot's history and spec candidates,
+// leaving out the sources the command doesn't enable.
+func (m *Model) enabledCands() ([]history.Candidate, []string) {
+	en := m.o.Engine.Enabled(m.sp)
+	var hist []history.Candidate
+	var vals []string
+	if en[spec.SourceHistory] {
+		hist = m.historyCands()
+	}
+	if en[spec.SourceSpec] {
+		vals = m.specCands()
+	}
+	return hist, vals
 }
 
 // historyCands returns the focused slot's values from history, or the flags
@@ -331,7 +346,7 @@ func (m *Model) sources(hist []history.Candidate, vals []string) []string {
 
 // nextSource switches to the source after the active one and reloads.
 func (m *Model) nextSource() {
-	srcs := m.sources(m.historyCands(), m.specCands())
+	srcs := m.sources(m.enabledCands())
 	i := slices.Index(srcs, m.active)
 	m.source = srcs[(i+1)%len(srcs)]
 	m.sel = -1

@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -15,14 +16,133 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Backend selects where completions for a command come from.
+// Completion sources a command's candidates can come from.
 const (
-	CompleteAuto  = "auto"
-	CompleteCobra = "cobra"
-	// CompleteShell asks the shell rx runs under, as <Tab> would.
-	CompleteShell = "shell"
-	CompleteNone  = "none"
+	SourceHistory  = "history"
+	SourceSpec     = "spec"
+	SourceProvider = "provider"
+	SourceCobra    = "cobra"
+	// SourceShell asks the shell rx runs under, as <Tab> would.
+	SourceShell = "shell"
+
+	// SourceAuto enables every source, SourceNone none of them. Either must
+	// be used on its own.
+	SourceAuto = "auto"
+	SourceNone = "none"
 )
+
+// AllSources lists the sources in the order Ctrl-S cycles through them.
+var AllSources = []string{SourceHistory, SourceSpec, SourceProvider, SourceCobra, SourceShell}
+
+// Sources is the list of enabled completion sources. It unmarshals from
+// either a single string or a list. A nil Sources is unset.
+type Sources []string
+
+func (s *Sources) UnmarshalYAML(n *yaml.Node) error {
+	if n.Tag == "!!null" || (n.Kind == yaml.ScalarNode && n.Value == "") {
+		*s = nil
+		return nil
+	}
+	if n.Kind == yaml.ScalarNode {
+		*s = Sources{n.Value}
+		return nil
+	}
+	var l []string
+	if err := n.Decode(&l); err != nil {
+		return err
+	}
+	if l == nil {
+		l = []string{}
+	}
+	*s = l
+	return nil
+}
+
+// ParseSources converts a value from a config file (a string or a list), or
+// a comma or space separated string from the environment, to Sources.
+func ParseSources(v any) (Sources, error) {
+	switch v := v.(type) {
+	case nil:
+		return nil, nil
+	case string:
+		// An empty string is unset, as in a plugin.
+		return strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' }), nil
+	case []string:
+		return append(Sources{}, v...), nil
+	case []any:
+		out := Sources{}
+		for _, x := range v {
+			s, ok := x.(string)
+			if !ok {
+				return nil, fmt.Errorf("want a source name, got %v", x)
+			}
+			out = append(out, s)
+		}
+		return out, nil
+	}
+	return nil, fmt.Errorf("want a source or a list of sources, got %v", v)
+}
+
+// Validate reports unknown, repeated or conflicting sources.
+func (s Sources) Validate() []error {
+	if s == nil {
+		return nil
+	}
+	if len(s) == 0 {
+		return []error{fmt.Errorf("empty list of sources (use %q)", SourceNone)}
+	}
+	var errs []error
+	seen := map[string]bool{}
+	for _, n := range s {
+		switch {
+		case n == SourceAuto || n == SourceNone:
+			if len(s) > 1 {
+				errs = append(errs, fmt.Errorf("%q can't be combined with other sources", n))
+			}
+		case n == "zsh":
+			errs = append(errs, fmt.Errorf("unknown source %q (use %q)", n, SourceShell))
+		case !slices.Contains(AllSources, n):
+			errs = append(errs, fmt.Errorf("unknown source %q", n))
+		}
+		if seen[n] {
+			errs = append(errs, fmt.Errorf("source %q listed twice", n))
+		}
+		seen[n] = true
+	}
+	return errs
+}
+
+// Set returns the enabled sources. Unset means auto.
+func (s Sources) Set() map[string]bool {
+	if s == nil {
+		s = Sources{SourceAuto}
+	}
+	out := map[string]bool{}
+	for _, n := range s {
+		switch n {
+		case SourceNone:
+			return map[string]bool{}
+		case SourceAuto:
+			for _, a := range AllSources {
+				out[a] = true
+			}
+		default:
+			out[n] = true
+		}
+	}
+	return out
+}
+
+// String returns the sources as written, or "auto" if unset.
+func (s Sources) String() string {
+	if s == nil {
+		return SourceAuto
+	}
+	if len(s) == 0 {
+		return SourceNone
+	}
+	return strings.Join(s, ",")
+}
 
 // Spec is a plugin for one command.
 type Spec struct {
@@ -31,7 +151,9 @@ type Spec struct {
 		Command string   `yaml:"command"`
 		Aliases []string `yaml:"aliases"`
 	} `yaml:"match"`
-	Complete    string              `yaml:"complete"`
+	// Complete lists the enabled completion sources, replacing the global
+	// setting. Unset uses the global setting.
+	Complete    Sources             `yaml:"complete"`
 	Flags       []FlagSpec          `yaml:"flags"`
 	Positionals []PosSpec           `yaml:"positionals"`
 	Providers   map[string]Provider `yaml:"providers"`
@@ -203,12 +325,13 @@ func (s *Spec) PositionalByName(name string) *PosSpec {
 	return nil
 }
 
-// Backend returns the configured completion backend, defaulting to auto.
-func (s *Spec) Backend() string {
-	if s == nil || s.Complete == "" {
-		return CompleteAuto
+// Enabled returns the completion sources enabled for the command: the
+// spec's, else global, else all of them.
+func (s *Spec) Enabled(global Sources) map[string]bool {
+	if s != nil && s.Complete != nil {
+		return s.Complete.Set()
 	}
-	return s.Complete
+	return global.Set()
 }
 
 // Validate reports problems with the spec.
@@ -218,12 +341,8 @@ func (s *Spec) Validate() []error {
 	if s.Match.Command == "" {
 		add("match.command is required")
 	}
-	switch s.Complete {
-	case "", CompleteAuto, CompleteCobra, CompleteShell, CompleteNone:
-	case "zsh":
-		add("complete: unknown backend %q (use %q)", s.Complete, CompleteShell)
-	default:
-		add("complete: unknown backend %q", s.Complete)
+	for _, err := range s.Complete.Validate() {
+		add("complete: %v", err)
 	}
 	seen := map[string]bool{}
 	for _, f := range s.Flags {
