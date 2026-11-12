@@ -94,6 +94,7 @@ func runEdit(shellName string, cursor int, buf string) error {
 		live = client
 	}
 	eng := engine.New(live, &complete.Cache{Dir: filepath.Join(cacheDir(), "complete")})
+	eng.Complete = cfg.Complete
 	out, err := tui.Run(tui.Options{
 		Cmd: cmd, Spec: sp, History: e.hist, Engine: eng, Infer: e.hist, TTY: tty,
 		Keys: cfg.Keys, Prompt: cfg.Prompt, Theme: cfg.Theme,

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/amimof/rx/internal/spec"
 	"github.com/amimof/rx/internal/tui"
 )
 
@@ -107,6 +108,31 @@ func TestPrompt(t *testing.T) {
 	}
 }
 
+func TestComplete(t *testing.T) {
+	dir := home(t)
+	c, err := Load("")
+	if err != nil || c.Complete != nil {
+		t.Fatalf("default complete %q, err %v", c.Complete, err)
+	}
+	for _, tt := range []struct {
+		yaml string
+		want spec.Sources
+	}{
+		{"complete: shell\n", spec.Sources{"shell"}},
+		{"complete: [history, cobra]\n", spec.Sources{"history", "cobra"}},
+		{"complete: none\n", spec.Sources{"none"}},
+	} {
+		write(t, filepath.Join(dir, "rx", "config.yaml"), tt.yaml)
+		if c, err = Load(""); err != nil || !slices.Equal(c.Complete, tt.want) {
+			t.Fatalf("%q: complete %q, err %v", tt.yaml, c.Complete, err)
+		}
+	}
+	t.Setenv("RX_COMPLETE", "history, spec")
+	if c, err = Load(""); err != nil || !slices.Equal(c.Complete, spec.Sources{"history", "spec"}) {
+		t.Fatalf("env complete %q, err %v", c.Complete, err)
+	}
+}
+
 func TestTheme(t *testing.T) {
 	dir := home(t)
 	c, err := Load("")
@@ -161,6 +187,10 @@ func TestInvalid(t *testing.T) {
 		{"theme: { arg: { bg: 256 } }\n", `theme.arg.bg: invalid color "256"`},
 		{"theme: { arg: [1] }\n", "theme.arg: want a color or a map"},
 		{"theme: dark\n", "theme: want a map of roles"},
+		{"complete: zsh\n", `complete: unknown source "zsh" (use "shell")`},
+		{"complete: [auto, shell]\n", `complete: "auto" can't be combined`},
+		{"complete: []\n", "complete: empty list of sources"},
+		{"complete: { cobra: true }\n", "complete: want a source or a list"},
 	} {
 		dir := home(t)
 		write(t, filepath.Join(dir, "rx", "config.yaml"), tt.yaml)

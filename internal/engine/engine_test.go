@@ -18,7 +18,7 @@ import (
 const toolSpec = `
 name: tool
 match: { command: tool }
-complete: none
+complete: [history, spec, provider]
 flags:
   - { name: env, short: e, takes: value, provider: envs }
   - { name: region, takes: value, provider: regions }
@@ -187,7 +187,7 @@ func TestSources(t *testing.T) {
 		key  string
 		want string
 	}{
-		{"env", "provider:envs"}, // complete: none hides cobra and the shell
+		{"env", "provider:envs"}, // cobra and the shell aren't enabled
 		{"verbose", ""},
 		{"pos:0", ""},
 	} {
@@ -201,11 +201,15 @@ func TestSources(t *testing.T) {
 		sh      Shell
 		want    string
 	}{
-		{"cobra", sh, "cobra,fakesh"},
+		{"cobra", sh, "cobra"},
 		{"cobra", nil, "cobra"},
-		// Auto with no cached INFO saying cobra: the shell only.
+		// Both with no cached INFO saying cobra: the shell only.
+		{"[cobra, shell]", sh, "fakesh"},
 		{"auto", sh, "fakesh"},
 		{"shell", sh, "fakesh"},
+		{"[shell]", nil, ""},
+		{"none", sh, ""},
+		{"[history, spec]", sh, ""},
 	} {
 		osp, err := spec.Parse([]byte("match: { command: other }\ncomplete: "+tt.backend+"\n"), "other.yaml")
 		if err != nil {
@@ -220,25 +224,72 @@ func TestSources(t *testing.T) {
 	}
 }
 
-// A forced source overrides the spec's backend.
+// A forced source overrides the backend the engine would pick, but only if
+// it is enabled.
 func TestStartFrom(t *testing.T) {
-	sp, err := spec.Parse([]byte("match: { command: other }\ncomplete: cobra\n"), "other.yaml")
+	for _, tt := range []struct {
+		complete string
+		want     int
+	}{
+		{"[cobra, shell]", 1},
+		{"cobra", 0},
+	} {
+		sp, err := spec.Parse([]byte("match: { command: other }\ncomplete: "+tt.complete+"\n"), "other.yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		reg := spec.NewRegistry()
+		reg.Add(sp)
+		cmd := (&spec.Classifier{Specs: reg}).Classify(parse.Parse("other a b"), 0)
+		e := New(&fakeShell{}, nil)
+		ch := make(chan Update, 10)
+		e.StartFrom(context.Background(), 1, cmd, sp, cmd.Find("pos:1"), "fakesh", func(u Update) { ch <- u })
+		select {
+		case u := <-ch:
+			if !u.Done || len(u.Result.Candidates) != tt.want || (tt.want > 0 && u.Source != "fakesh") {
+				t.Fatalf("%s: update = %+v", tt.complete, u)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out")
+		}
+	}
+}
+
+// The engine's default applies to commands whose spec doesn't set sources.
+func TestEngineDefaultSources(t *testing.T) {
+	cmd := (&spec.Classifier{Specs: spec.NewRegistry()}).Classify(parse.Parse("other a b"), 0)
+	sh := &fakeShell{}
+	e := New(sh, nil)
+	e.Complete = spec.Sources{spec.SourceHistory}
+	if got := e.Sources(cmd, nil, cmd.Find("pos:1")); len(got) != 0 {
+		t.Errorf("sources = %q, want none", got)
+	}
+	ups := collect(t, e, cmd, nil, cmd.Find("pos:1"))
+	if len(ups) != 1 || len(ups[0].Result.Candidates) != 0 || sh.infos != 0 {
+		t.Errorf("updates = %+v, %d INFO requests", ups, sh.infos)
+	}
+
+	// A spec's own sources replace the default.
+	sp, err := spec.Parse([]byte("match: { command: other }\ncomplete: shell\n"), "other.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	reg := spec.NewRegistry()
-	reg.Add(sp)
-	cmd := (&spec.Classifier{Specs: reg}).Classify(parse.Parse("other a b"), 0)
+	if got := strings.Join(e.Sources(cmd, sp, cmd.Find("pos:1")), ","); got != "fakesh" {
+		t.Errorf("spec sources = %q, want fakesh", got)
+	}
+}
+
+// A disabled provider is neither offered nor run.
+func TestProviderDisabled(t *testing.T) {
+	cmd, sp := setup(t, "tool -e dev")
+	sp.Complete = spec.Sources{spec.SourceShell}
 	e := New(&fakeShell{}, nil)
-	ch := make(chan Update, 10)
-	e.StartFrom(context.Background(), 1, cmd, sp, cmd.Find("pos:1"), "fakesh", func(u Update) { ch <- u })
-	select {
-	case u := <-ch:
-		if u.Source != "fakesh" || len(u.Result.Candidates) != 1 {
-			t.Fatalf("update = %+v", u)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out")
+	if got := strings.Join(e.Sources(cmd, sp, cmd.Find("env")), ","); got != "fakesh" {
+		t.Errorf("sources = %q, want fakesh", got)
+	}
+	ups := collect(t, e, cmd, sp, cmd.Find("env"))
+	if last := ups[len(ups)-1]; last.Source != "fakesh" {
+		t.Errorf("updates = %+v", ups)
 	}
 }
 

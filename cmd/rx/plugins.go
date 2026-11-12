@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"text/tabwriter"
 
 	"github.com/spf13/cobra"
 
@@ -23,10 +24,16 @@ func newPluginsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', 0)
 			for _, s := range reg.Specs() {
-				fmt.Printf("%-12s %-8s %s\n", s.Match.Command, s.Backend(), s.Source)
+				// Plugins without sources use the global setting.
+				src := "default"
+				if s.Complete != nil {
+					src = s.Complete.String()
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\n", s.Match.Command, src, s.Source)
 			}
-			return nil
+			return w.Flush()
 		},
 	}, &cobra.Command{
 		Use:   "lint [FILE...]",
