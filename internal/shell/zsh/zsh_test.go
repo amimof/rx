@@ -58,6 +58,9 @@ compdef _bigfix bigfix
 _cobrafix() { local out=$(cobrafix __complete "${words[@]:1}") }
 compdef _cobrafix cobrafix
 
+_clapfix() { local _CLAP_COMPLETE_INDEX=$(( CURRENT - 1 )); local out=$(COMPLETE=zsh clapfix -- "${words[@]}") }
+compdef _clapfix clapfix
+
 export RX_OUT=%[1]s RX_SCRIPT=%[1]s/script RX_LOG=%[1]s/log
 # The fifo directory is created here, so tests can check it is cleaned up.
 export XDG_RUNTIME_DIR=%[1]s/run
@@ -168,8 +171,9 @@ func req(fields ...string) string {
 
 func TestWidgetProtocol(t *testing.T) {
 	s := fake(t,
-		req("INFO", "fx"),
-		req("INFO", "cobrafix"),
+		req("INFO", "fx", "__complete", "_CLAP_COMPLETE_INDEX"),
+		req("INFO", "cobrafix", "__complete", "_CLAP_COMPLETE_INDEX"),
+		req("INFO", "clapfix", "__complete", "_CLAP_COMPLETE_INDEX"),
 		req("COMPLETE", "fixture "),
 		req("COMPLETE", "fx al"),
 		req("DONE", "13", "fixture alpha"),
@@ -179,20 +183,23 @@ func TestWidgetProtocol(t *testing.T) {
 	if got := s.read("args"); got != "edit --shell zsh --cursor 9 -- fixture b\n" {
 		t.Errorf("rx args = %q", got)
 	}
-	if got := s.read("resp.1"); got != "I\tfixture\t_fixture\t0\nEND\n" {
+	if got := s.read("resp.1"); got != "I\tfixture\t_fixture\t\nEND\n" {
 		t.Errorf("INFO fx = %q", got)
 	}
-	if got := s.read("resp.2"); got != "I\t\t_cobrafix\t1\nEND\n" {
+	if got := s.read("resp.2"); got != "I\t\t_cobrafix\t__complete\nEND\n" {
 		t.Errorf("INFO cobrafix = %q", got)
 	}
-	comp := s.read("resp.3")
+	if got := s.read("resp.3"); got != "I\t\t_clapfix\t_CLAP_COMPLETE_INDEX\nEND\n" {
+		t.Errorf("INFO clapfix = %q", got)
+	}
+	comp := s.read("resp.4")
 	for _, want := range []string{"C\talpha\talpha  -- first host\t", "C\tbeta\t", "\nEND\n"} {
 		if !strings.Contains(comp, want) {
 			t.Errorf("COMPLETE missing %q:\n%s", want, comp)
 		}
 	}
 	// Completion through the alias filters by the typed prefix.
-	if comp := s.read("resp.4"); !strings.Contains(comp, "C\talpha\t") || strings.Contains(comp, "beta") {
+	if comp := s.read("resp.5"); !strings.Contains(comp, "C\talpha\t") || strings.Contains(comp, "beta") {
 		t.Errorf("COMPLETE via alias = %q", comp)
 	}
 	if got := s.read("ran"); got != "fixture alpha\n" {

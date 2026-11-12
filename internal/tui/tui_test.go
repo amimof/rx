@@ -315,7 +315,8 @@ func TestProgramTabThroughSlots(t *testing.T) {
 
 const cycleSpec = `
 match: { command: kubectl, aliases: [k] }
-complete: [history, spec, cobra]
+complete: [history, spec, cli]
+cli: cobra
 flags:
   - { name: namespace, short: n, takes: value }
 positionals:
@@ -530,7 +531,7 @@ func TestCycleSource(t *testing.T) {
 	}
 	for _, step := range []struct{ active, values string }{
 		{"history", "monitoring,old"},
-		{"cobra", "default,kube-system,monitoring"},
+		{"cli", "default,kube-system,monitoring"},
 		{"", "default,kube-system,monitoring,old"},
 	} {
 		h.keys(key(tea.KeyCtrlS))
@@ -556,7 +557,7 @@ func TestCycleSource(t *testing.T) {
 
 	// A typed query survives switching source.
 	h.keys(typ("mon"), key(tea.KeyCtrlS))
-	if h.m.query != "mon" || h.m.active != "cobra" || h.m.selected() != "monitoring" {
+	if h.m.query != "mon" || h.m.active != "cli" || h.m.selected() != "monitoring" {
 		t.Fatalf("query %q, active %q, selected %q", h.m.query, h.m.active, h.m.selected())
 	}
 }
@@ -596,11 +597,11 @@ func TestDisabledSources(t *testing.T) {
 		t.Fatalf("sources = %q, want history and spec", got)
 	}
 
-	sp.Complete = spec.Sources{spec.SourceCobra}
+	sp.Complete = spec.Sources{spec.SourceCLI}
 	h.m.refocus()
 	h.pump()
-	if got := h.m.sources(h.m.enabledCands()); !slices.Equal(got, []string{"", "cobra"}) {
-		t.Fatalf("sources = %q, want all and cobra", got)
+	if got := h.m.sources(h.m.enabledCands()); !slices.Equal(got, []string{"", "cli"}) {
+		t.Fatalf("sources = %q, want all and cli", got)
 	}
 	for _, r := range h.m.rows {
 		for _, s := range r.sources {
@@ -610,8 +611,8 @@ func TestDisabledSources(t *testing.T) {
 		}
 	}
 	h.keys(key(tea.KeyCtrlS))
-	if h.m.active != "cobra" {
-		t.Fatalf("ctrl+s: active = %q, want cobra", h.m.active)
+	if h.m.active != "cli" {
+		t.Fatalf("ctrl+s: active = %q, want cli", h.m.active)
 	}
 }
 
@@ -686,7 +687,7 @@ func TestHistoryRanksFirst(t *testing.T) {
 	x := history.Build(es, spec.Classifier{Specs: reg, Aliases: spec.Aliases{"k": "kubectl"}})
 	h := newHarness(t, "k get pods -n default", x)
 	r := h.m.rows[0]
-	if r.value != "monitoring" || strings.Join(r.sources, ",") != "history,cobra" {
+	if r.value != "monitoring" || strings.Join(r.sources, ",") != "history,cli" {
 		t.Fatalf("first row = %+v", r)
 	}
 }

@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/amimof/rx/internal/complete"
-	"github.com/amimof/rx/internal/complete/cobra"
+	"github.com/amimof/rx/internal/complete/cli"
 	"github.com/amimof/rx/internal/complete/provider"
 	"github.com/amimof/rx/internal/model"
 	"github.com/amimof/rx/internal/shell/proto"
@@ -18,10 +18,11 @@ import (
 )
 
 // Shell is the live shell rx runs under. It completes command lines and
-// describes command words; Name identifies it as a completion source.
+// describes command words, reporting which of markers their completion
+// function contains; Name identifies it as a completion source.
 type Shell interface {
 	complete.Backend
-	Info(ctx context.Context, word string) (proto.Info, error)
+	Info(ctx context.Context, word string, markers ...string) (proto.Info, error)
 }
 
 // Update is a batch of candidates delivered to the editor.
@@ -48,28 +49,40 @@ type Engine struct {
 	// set its own; nil enables all of them.
 	Complete spec.Sources
 
-	cobra    cobra.Backend
+	cli      map[string]*cli.Backend // by protocol name
 	mu       sync.Mutex
 	infos    map[string]proto.Info
-	disabled map[string]bool // cobra unsupported, by command
+	disabled map[string]bool // cli protocol unsupported, by command
 }
 
 // New returns an engine with defaults. sh may be nil.
 func New(sh Shell, cache *complete.Cache) *Engine {
-	return &Engine{
+	e := &Engine{
 		Shell: sh, Cache: cache,
 		Timeout:  2 * time.Second,
 		TTL:      30 * time.Second,
-		cobra:    cobra.Backend{Env: os.Environ()},
+		cli:      map[string]*cli.Backend{},
 		infos:    map[string]proto.Info{},
 		disabled: map[string]bool{},
 	}
+	env := os.Environ()
+	for _, p := range cli.Protocols {
+		e.cli[p.Name()] = &cli.Backend{Protocol: p, Env: env}
+	}
+	return e
 }
 
 type job struct {
 	backend complete.Backend
 	req     complete.Request
 	ttl     time.Duration
+	// key names the backend in the cache; empty for its Name.
+	key string
+}
+
+// cliJob returns a job running b, cached per protocol.
+func cliJob(b *cli.Backend, req complete.Request, ttl time.Duration) *job {
+	return &job{backend: b, req: req, ttl: ttl, key: cli.Source + ":" + b.Protocol.Name()}
 }
 
 // execBackend adapts a YAML provider to complete.Backend.
@@ -138,11 +151,9 @@ func (e *Engine) StartFrom(ctx context.Context, id uint64, cmd *model.Command, s
 			}
 			j = &job{backend: prov, req: req, ttl: ttl}
 		} else if source != "" {
-			if b := e.forced(source, en); b != nil {
-				j = &job{backend: b, req: req, ttl: e.TTL}
-			}
-		} else if b := e.backendFor(ctx, head, name, en); b != nil {
-			j = &job{backend: b, req: req, ttl: e.TTL}
+			j = e.job(e.forced(source, head, name, sp, en), req)
+		} else {
+			j = e.job(e.backendFor(ctx, head, name, sp, en), req)
 		}
 		if j == nil {
 			send(Update{ID: id, Done: true})
@@ -152,9 +163,25 @@ func (e *Engine) StartFrom(ctx context.Context, id uint64, cmd *model.Command, s
 	}()
 }
 
+// job returns a job running b with the engine's TTL, or nil if b is nil.
+func (e *Engine) job(b complete.Backend, req complete.Request) *job {
+	switch b := b.(type) {
+	case nil:
+		return nil
+	case *cli.Backend:
+		return cliJob(b, req, e.TTL)
+	default:
+		return &job{backend: b, req: req, ttl: e.TTL}
+	}
+}
+
 func (e *Engine) run(ctx context.Context, id uint64, j job, cmdName string, send func(Update)) {
 	src := j.backend.Name()
-	if res, at, ok := e.Cache.Get(src, j.req); ok {
+	key := j.key
+	if key == "" {
+		key = src
+	}
+	if res, at, ok := e.Cache.Get(key, j.req); ok {
 		stale := time.Since(at) > j.ttl
 		send(Update{ID: id, Source: src, Result: res, Stale: stale, Done: !stale})
 		if !stale {
@@ -164,13 +191,13 @@ func (e *Engine) run(ctx context.Context, id uint64, j job, cmdName string, send
 	cctx, cancel := context.WithTimeout(ctx, e.Timeout)
 	defer cancel()
 	res, err := j.backend.Complete(cctx, j.req)
-	if errors.Is(err, cobra.ErrUnsupported) {
+	if errors.Is(err, cli.ErrUnsupported) {
 		e.mu.Lock()
 		e.disabled[cmdName] = true
 		e.mu.Unlock()
 	}
 	if err == nil {
-		_ = e.Cache.Put(src, j.req, res)
+		_ = e.Cache.Put(key, j.req, res)
 	}
 	send(Update{ID: id, Source: src, Result: res, Err: err, Done: true})
 }
@@ -181,23 +208,54 @@ func (e *Engine) Enabled(sp *spec.Spec) map[string]bool {
 	return sp.Enabled(e.Complete)
 }
 
-// forced returns the cobra or shell backend named source if it is enabled,
-// or nil.
-func (e *Engine) forced(source string, en map[string]bool) complete.Backend {
+// forced returns the cli or shell backend named source if it is enabled and
+// usable for the command, or nil. Like Sources, it never blocks.
+func (e *Engine) forced(source, head, name string, sp *spec.Spec, en map[string]bool) complete.Backend {
 	switch {
-	case source == e.cobra.Name() && en[spec.SourceCobra]:
-		return &e.cobra
+	case source == cli.Source:
+		if b := e.cliBackend(head, name, sp, en); b != nil {
+			return b
+		}
 	case e.Shell != nil && source == e.Shell.Name() && en[spec.SourceShell]:
 		return e.Shell
 	}
 	return nil
 }
 
+// cliBackend returns the cli backend for the command if the cli source is
+// enabled, the command hasn't turned out not to support its protocol, and
+// the protocol is pinned by the spec or found in a cached INFO. It never
+// blocks.
+func (e *Engine) cliBackend(head, name string, sp *spec.Spec, en map[string]bool) *cli.Backend {
+	if !en[spec.SourceCLI] {
+		return nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.disabled[name] {
+		return nil
+	}
+	if p := pinned(sp); p != nil {
+		return e.cli[p.Name()]
+	}
+	if p := cli.ByMarker(e.infos[head].Marker); p != nil {
+		return e.cli[p.Name()]
+	}
+	return nil
+}
+
+// pinned returns the protocol the spec pins with its cli setting, or nil.
+func pinned(sp *spec.Spec) cli.Protocol {
+	if sp == nil || sp.CLI == "" {
+		return nil
+	}
+	return cli.Lookup(sp.CLI)
+}
+
 // Sources returns the names of the enabled backends that can complete slot
-// focus of cmd (flag names when focus is -1): its provider, cobra and the
-// shell. It never blocks, so with the shell enabled too, cobra is only
-// offered once a cached INFO says the command is cobra-generated; unknown
-// binaries are never probed.
+// focus of cmd (flag names when focus is -1): its provider, cli and the
+// shell. It never blocks, so cli is only offered once the spec pins a
+// protocol or a cached INFO found one; unknown binaries are never probed.
 func (e *Engine) Sources(cmd *model.Command, sp *spec.Spec, focus int) []string {
 	en := e.Enabled(sp)
 	var out []string
@@ -210,11 +268,8 @@ func (e *Engine) Sources(cmd *model.Command, sp *spec.Spec, focus int) []string 
 			out = append(out, "provider:"+name)
 		}
 	}
-	e.mu.Lock()
-	cobra := en[spec.SourceCobra] && !e.disabled[cmd.Name] && (!en[spec.SourceShell] || e.infos[cmd.Head.Value].Cobra)
-	e.mu.Unlock()
-	if cobra {
-		out = append(out, e.cobra.Name())
+	if e.cliBackend(cmd.Head.Value, cmd.Name, sp, en) != nil {
+		out = append(out, cli.Source)
 	}
 	if e.Shell != nil && en[spec.SourceShell] {
 		out = append(out, e.Shell.Name())
@@ -239,42 +294,35 @@ func providerFor(sp *spec.Spec, s model.Slot) string {
 }
 
 // backendFor resolves the backend for a command from the enabled sources:
-// cobra or the shell if only one of them is enabled, or with both, cobra if
-// the shell's completion function for it is cobra-generated, otherwise the
-// shell. Unknown binaries are never probed with __complete.
-func (e *Engine) backendFor(ctx context.Context, head, name string, en map[string]bool) complete.Backend {
+// with cli enabled, the protocol the spec pins, or else the one the shell's
+// completion function for the command is generated by; otherwise the shell
+// if it is enabled. Detection asks the shell even when the shell source is
+// disabled. Unknown binaries are never probed.
+func (e *Engine) backendFor(ctx context.Context, head, name string, sp *spec.Spec, en map[string]bool) complete.Backend {
 	var sb complete.Backend
 	if e.Shell != nil && en[spec.SourceShell] {
 		sb = e.Shell
 	}
 	e.mu.Lock()
 	disabled := e.disabled[name]
+	_, known := e.infos[head]
 	e.mu.Unlock()
-	if !en[spec.SourceCobra] || disabled {
+	if !en[spec.SourceCLI] || disabled {
 		return sb
 	}
-	if !en[spec.SourceShell] {
-		return &e.cobra
-	}
-	if e.Shell == nil {
-		return nil
-	}
-	e.mu.Lock()
-	info, ok := e.infos[head]
-	e.mu.Unlock()
-	if !ok {
+	if pinned(sp) == nil && !known && e.Shell != nil {
 		ictx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 		defer cancel()
-		var err error
-		if info, err = e.Shell.Info(ictx, head); err != nil {
+		info, err := e.Shell.Info(ictx, head, cli.Markers()...)
+		if err != nil {
 			return sb
 		}
 		e.mu.Lock()
 		e.infos[head] = info
 		e.mu.Unlock()
 	}
-	if info.Cobra {
-		return &e.cobra
+	if b := e.cliBackend(head, name, sp, en); b != nil {
+		return b
 	}
 	return sb
 }

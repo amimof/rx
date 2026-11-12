@@ -21,7 +21,13 @@ func fakeShell(t *testing.T, in io.Reader, out io.Writer, delay time.Duration) <
 			f := strings.Split(sc.Text(), "\t")
 			switch f[0] {
 			case "INFO":
-				fmt.Fprintf(out, "I\t%s\t%s\t%s\nEND\n", "kubectl", "__start_kubectl", "1")
+				// "old" answers like a widget from before markers; others
+				// match the last requested marker.
+				marker := "1"
+				if Unescape(f[1]) != "old" {
+					marker = f[len(f)-1]
+				}
+				fmt.Fprintf(out, "I\t%s\t%s\t%s\nEND\n", "kubectl", "__start_kubectl", marker)
 			case "COMPLETE":
 				time.Sleep(delay)
 				line := Unescape(f[1])
@@ -48,9 +54,12 @@ func TestClient(t *testing.T) {
 	c := NewClient("zsh", fromShellR, toShellW)
 	ctx := context.Background()
 
-	info, err := c.Info(ctx, "k")
-	if err != nil || !info.Cobra || info.Alias != "kubectl" {
+	info, err := c.Info(ctx, "k", "__complete", "x\ty")
+	if err != nil || info.Marker != "x\ty" || info.Alias != "kubectl" {
 		t.Fatalf("info = %+v, %v", info, err)
+	}
+	if info, err = c.Info(ctx, "old", "__complete"); err != nil || info.Marker != "__complete" {
+		t.Fatalf("legacy info = %+v, %v", info, err)
 	}
 	res, err := c.Complete(ctx, complete.Request{Line: "ssh \tweird\nline "})
 	if err != nil {

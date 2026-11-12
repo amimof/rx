@@ -4,7 +4,8 @@ name: kubectl
 match:
   command: kubectl
   aliases: [k]
-complete: [history, spec, provider, cobra]
+complete: [history, spec, provider, cli]
+cli: cobra
 flags:
   - { name: namespace, short: n, takes: value, mutex: [all-namespaces] }
   - { name: all-namespaces, short: A, takes: none, mutex: [namespace] }

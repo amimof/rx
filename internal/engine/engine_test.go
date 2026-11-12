@@ -2,12 +2,16 @@ package engine
 
 import (
 	"context"
+	"errors"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/amimof/rx/internal/complete"
+	"github.com/amimof/rx/internal/complete/cli"
 	"github.com/amimof/rx/internal/complete/provider"
 	"github.com/amimof/rx/internal/model"
 	"github.com/amimof/rx/internal/parse"
@@ -143,8 +147,11 @@ func TestStartNeverSendsSynchronously(t *testing.T) {
 }
 
 // fakeShell answers completions with the request line, and INFO with a
-// non-cobra completion function.
-type fakeShell struct{ infos int }
+// completion function containing marker, if it is one of those requested.
+type fakeShell struct {
+	infos  int
+	marker string
+}
 
 func (f *fakeShell) Name() string { return "fakesh" }
 
@@ -152,9 +159,13 @@ func (f *fakeShell) Complete(_ context.Context, req complete.Request) (complete.
 	return complete.Result{Candidates: []complete.Candidate{{Value: req.Line, Source: "fakesh"}}}, nil
 }
 
-func (f *fakeShell) Info(context.Context, string) (proto.Info, error) {
+func (f *fakeShell) Info(_ context.Context, _ string, markers ...string) (proto.Info, error) {
 	f.infos++
-	return proto.Info{CompFunc: "_other"}, nil
+	info := proto.Info{CompFunc: "_other"}
+	if slices.Contains(markers, f.marker) {
+		info.Marker = f.marker
+	}
+	return info, nil
 }
 
 func TestEngineShell(t *testing.T) {
@@ -187,7 +198,7 @@ func TestSources(t *testing.T) {
 		key  string
 		want string
 	}{
-		{"env", "provider:envs"}, // cobra and the shell aren't enabled
+		{"env", "provider:envs"}, // cli and the shell aren't enabled
 		{"verbose", ""},
 		{"pos:0", ""},
 	} {
@@ -201,15 +212,18 @@ func TestSources(t *testing.T) {
 		sh      Shell
 		want    string
 	}{
-		{"cobra", sh, "cobra"},
-		{"cobra", nil, "cobra"},
-		// Both with no cached INFO saying cobra: the shell only.
-		{"[cobra, shell]", sh, "fakesh"},
+		// A pinned protocol is offered with or without a shell.
+		{"cli\ncli: cobra", sh, "cli"},
+		{"cli\ncli: clap", nil, "cli"},
+		{"auto\ncli: clap", sh, "cli,fakesh"},
+		// No pin and no cached INFO naming a protocol: no cli.
+		{"cli", sh, ""},
+		{"[cli, shell]", sh, "fakesh"},
 		{"auto", sh, "fakesh"},
 		{"shell", sh, "fakesh"},
 		{"[shell]", nil, ""},
 		{"none", sh, ""},
-		{"[history, spec]", sh, ""},
+		{"[history, spec]\ncli: cobra", sh, ""},
 	} {
 		osp, err := spec.Parse([]byte("match: { command: other }\ncomplete: "+tt.backend+"\n"), "other.yaml")
 		if err != nil {
@@ -231,8 +245,8 @@ func TestStartFrom(t *testing.T) {
 		complete string
 		want     int
 	}{
-		{"[cobra, shell]", 1},
-		{"cobra", 0},
+		{"[cli, shell]", 1},
+		{"cli", 0},
 	} {
 		sp, err := spec.Parse([]byte("match: { command: other }\ncomplete: "+tt.complete+"\n"), "other.yaml")
 		if err != nil {
@@ -290,6 +304,123 @@ func TestProviderDisabled(t *testing.T) {
 	ups := collect(t, e, cmd, sp, cmd.Find("env"))
 	if last := ups[len(ups)-1]; last.Source != "fakesh" {
 		t.Errorf("updates = %+v", ups)
+	}
+}
+
+// fakeCLI puts an "other" command on PATH that speaks both the cobra and
+// the clap protocol, answering cobra-val or clap-val, and appends each run
+// to a log so tests can check it wasn't run. It must be called before New,
+// which snapshots the environment.
+func fakeCLI(t *testing.T, script string) (logFile string) {
+	t.Helper()
+	dir := t.TempDir()
+	logFile = filepath.Join(dir, "runs")
+	if script == "" {
+		script = `
+echo "$*" >> "$RX_TEST_LOG"
+if [ "$COMPLETE" = fish ]; then printf 'clap-val\tfrom clap\n'; exit 0; fi
+if [ "$1" = __complete ]; then printf 'cobra-val\n:4\n'; exit 0; fi
+exit 1
+`
+	}
+	if err := os.WriteFile(filepath.Join(dir, "other"), []byte("#!/bin/sh\n"+script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("RX_TEST_LOG", logFile)
+	return logFile
+}
+
+func otherCmd(t *testing.T, yaml string) (*model.Command, *spec.Spec) {
+	t.Helper()
+	reg := spec.NewRegistry()
+	var sp *spec.Spec
+	if yaml != "" {
+		var err error
+		if sp, err = spec.Parse([]byte("match: { command: other }\n"+yaml), "other.yaml"); err != nil {
+			t.Fatal(err)
+		}
+		if errs := sp.Validate(); len(errs) > 0 {
+			t.Fatal(errs)
+		}
+		reg.Add(sp)
+	}
+	return (&spec.Classifier{Specs: reg}).Classify(parse.Parse("other a b"), 0), sp
+}
+
+// The shell's completion function picks the protocol.
+func TestCLIDetect(t *testing.T) {
+	fakeCLI(t, "")
+	for _, tt := range []struct{ marker, want string }{
+		{"__complete", "cobra-val"},
+		{"_CLAP_COMPLETE_INDEX", "clap-val"},
+	} {
+		cmd, sp := otherCmd(t, "")
+		sh := &fakeShell{marker: tt.marker}
+		e := New(sh, nil)
+		ups := collect(t, e, cmd, sp, cmd.Find("pos:1"))
+		last := ups[len(ups)-1]
+		if last.Err != nil || last.Source != "cli" || len(last.Result.Candidates) != 1 || last.Result.Candidates[0].Value != tt.want {
+			t.Fatalf("%s: updates = %+v", tt.marker, ups)
+		}
+		// Once INFO is cached, cli is offered without asking again.
+		if got := strings.Join(e.Sources(cmd, sp, cmd.Find("pos:1")), ","); got != "cli,fakesh" || sh.infos != 1 {
+			t.Errorf("%s: sources = %q after %d INFO requests", tt.marker, got, sh.infos)
+		}
+	}
+}
+
+// Commands whose completion function names no protocol are never run.
+func TestCLIUnknownNotRun(t *testing.T) {
+	runs := fakeCLI(t, "")
+	cmd, sp := otherCmd(t, "")
+	e := New(&fakeShell{}, nil)
+	ups := collect(t, e, cmd, sp, cmd.Find("pos:1"))
+	if last := ups[len(ups)-1]; last.Source != "fakesh" {
+		t.Errorf("updates = %+v", ups)
+	}
+	if _, err := os.Stat(runs); !os.IsNotExist(err) {
+		t.Errorf("command was run: %v", err)
+	}
+}
+
+// A pinned protocol works without a shell, and isn't detected.
+func TestCLIPinned(t *testing.T) {
+	fakeCLI(t, "")
+	cmd, sp := otherCmd(t, "complete: [cli]\ncli: clap\n")
+	e := New(nil, nil)
+	if got := strings.Join(e.Sources(cmd, sp, cmd.Find("pos:1")), ","); got != "cli" {
+		t.Errorf("sources = %q", got)
+	}
+	ups := collect(t, e, cmd, sp, cmd.Find("pos:1"))
+	if last := ups[len(ups)-1]; last.Err != nil || len(last.Result.Candidates) != 1 || last.Result.Candidates[0].Desc != "from clap" {
+		t.Fatalf("updates = %+v", ups)
+	}
+
+	sh := &fakeShell{marker: "__complete"}
+	e = New(sh, nil)
+	ups = collect(t, e, cmd, sp, cmd.Find("pos:1"))
+	if last := ups[len(ups)-1]; len(last.Result.Candidates) != 1 || last.Result.Candidates[0].Value != "clap-val" || sh.infos != 0 {
+		t.Fatalf("pinned with shell: updates = %+v, %d INFO requests", ups, sh.infos)
+	}
+}
+
+// A command that turns out not to speak its protocol falls back to the
+// shell for the rest of the session.
+func TestCLIUnsupported(t *testing.T) {
+	fakeCLI(t, "echo usage: other\n")
+	cmd, sp := otherCmd(t, "cli: cobra\n")
+	e := New(&fakeShell{}, nil)
+	ups := collect(t, e, cmd, sp, cmd.Find("pos:1"))
+	if last := ups[len(ups)-1]; !errors.Is(last.Err, cli.ErrUnsupported) {
+		t.Fatalf("updates = %+v", ups)
+	}
+	if got := strings.Join(e.Sources(cmd, sp, cmd.Find("pos:1")), ","); got != "fakesh" {
+		t.Errorf("sources = %q", got)
+	}
+	ups = collect(t, e, cmd, sp, cmd.Find("pos:1"))
+	if last := ups[len(ups)-1]; last.Source != "fakesh" {
+		t.Errorf("fallback updates = %+v", ups)
 	}
 }
 
