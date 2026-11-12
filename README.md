@@ -1,5 +1,8 @@
 # rx
 
+[![CI](https://github.com/amimof/rx/actions/workflows/ci.yml/badge.svg)](https://github.com/amimof/rx/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/amimof/rx)](https://github.com/amimof/rx/releases/latest)
+
 **Edit shell commands by their parts, not by moving the cursor around.**
 
 <p align="center">
@@ -37,11 +40,17 @@ Suggestions come from:
 
 ## Install
 
-rx currently supports **zsh** only (`rx init zsh`). You need Go to build it.
+rx currently supports **zsh** only (`rx init zsh`), on Linux and macOS.
+
+Download the latest release for your platform from [GitHub Releases](https://github.com/amimof/rx/releases) and put `rx` on your `PATH`:
 
 ```sh
-go install github.com/amimof/rx/cmd/rx@latest
+curl -fsSL "https://github.com/amimof/rx/releases/latest/download/rx_$(uname -s)_$(uname -m).tar.gz" | tar -xz rx
+sudo install rx /usr/local/bin/
+rx --version
 ```
+
+Each release also has a `checksums.txt` to verify the download. To build from source instead, run `go install github.com/amimof/rx/cmd/rx@latest`.
 
 Then add this line to your `~/.zshrc` and open a new shell:
 
@@ -195,13 +204,4 @@ In the editor, `Ctrl+S` switches to a single source for the rest of the session.
 
 ## Contributing
 
-Issues and pull requests are welcome. Since this is an MVP, please open an issue before starting on larger changes.
-
-```sh
-go build -o bin/rx ./cmd/rx
-go test ./...
-```
-
-The zsh integration tests need `zsh` installed and are skipped without it.
-
-To add support for another shell, start with the widget contract in [`internal/shell/proto`](internal/shell/proto/proto.go) and the registry in [`internal/shell/shell.go`](internal/shell/shell.go). A new shell needs a widget script under `internal/shell/<name>/`, a history reader and a registry entry. Its widget tests can reuse `internal/shell/testdata/fake-rx`.
+Issues and pull requests are welcome. Since this is an MVP, please open an issue before starting on larger changes. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to build, test and add support for another shell.

@@ -132,7 +132,9 @@ func TestLoadCache(t *testing.T) {
 
 	// Appending indexes only the new entry on top of the cached counts.
 	f, _ := os.OpenFile(hf, os.O_APPEND|os.O_WRONLY, 0)
-	f.WriteString(": 1700002000:0;k get pods -n production\n")
+	if _, err := f.WriteString(": 1700002000:0;k get pods -n production\n"); err != nil {
+		t.Fatal(err)
+	}
 	f.Close()
 	x, err := Load(hf, cache, "salt", ReadZsh, classifier(t))
 	if err != nil {

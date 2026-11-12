@@ -30,10 +30,14 @@ var cfgFile string
 
 var errCancelled = errors.New("cancelled")
 
+// version is set at build time with -ldflags "-X main.version=...".
+var version = "dev"
+
 func newRoot() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "rx",
-		Short: "Edit shell commands as slots",
+		Use:     "rx",
+		Version: version,
+		Short:   "Edit shell commands as slots",
 		Long: `rx edits shell commands as slots: arguments and flags you change from a
 list of suggestions taken from history, shell completion and plugins.
 
