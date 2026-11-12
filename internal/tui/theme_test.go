@@ -43,7 +43,7 @@ func TestNewStylesTheme(t *testing.T) {
 		t.Errorf("flag = %v", st.flag)
 	}
 	// Roles the theme doesn't mention keep their defaults.
-	if st.value.GetForeground() != lipgloss.Color("2") || !st.border.GetFaint() || !st.focus.GetReverse() {
+	if st.value.GetForeground() != lipgloss.Color("2") || st.spinner.GetForeground() != lipgloss.Color("2") || !st.border.GetFaint() || !st.focus.GetReverse() {
 		t.Errorf("value = %v, border = %v, focus = %v", st.value, st.border, st.focus)
 	}
 }

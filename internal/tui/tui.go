@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -73,7 +74,7 @@ func run(o Options, in io.Reader, out io.Writer) (Outcome, error) {
 }
 
 type styles struct {
-	focus, dim, sel, err lipgloss.Style
+	focus, dim, sel, err, spinner lipgloss.Style
 	// Slot parts in the preview: the command word, flag names, flag values
 	// and positional arguments.
 	head, flag, value, arg lipgloss.Style
@@ -87,16 +88,17 @@ func newStyles(r *lipgloss.Renderer, t Theme) styles {
 		th[role] = s
 	}
 	return styles{
-		focus:  th[RoleFocus].style(r),
-		dim:    th[RoleDim].style(r),
-		sel:    th[RoleSel].style(r),
-		err:    th[RoleErr].style(r),
-		head:   th[RoleHead].style(r),
-		flag:   th[RoleFlag].style(r),
-		value:  th[RoleValue].style(r),
-		arg:    th[RoleArg].style(r),
-		border: th[RoleBorder].style(r),
-		prompt: th[RolePrompt].style(r),
+		focus:   th[RoleFocus].style(r),
+		dim:     th[RoleDim].style(r),
+		sel:     th[RoleSel].style(r),
+		spinner: th[RoleSpinner].style(r),
+		err:     th[RoleErr].style(r),
+		head:    th[RoleHead].style(r),
+		flag:    th[RoleFlag].style(r),
+		value:   th[RoleValue].style(r),
+		arg:     th[RoleArg].style(r),
+		border:  th[RoleBorder].style(r),
+		prompt:  th[RolePrompt].style(r),
 	}
 }
 
@@ -135,7 +137,7 @@ type Model struct {
 	cands   map[string]*row
 	reqID   uint64
 	loading bool
-	stale   bool
+	spin    spinner.Model // shown below the candidates while loading
 	message string
 	errText string
 
@@ -166,6 +168,9 @@ type pendingCycle struct {
 
 func newModel(o Options, st styles) *Model {
 	m := &Model{o: o, st: st, cmd: o.Cmd, sp: o.Spec, width: 80, keys: o.Keys}
+	s := spinner.MiniDot
+	s.FPS = 100 * time.Millisecond // fzf's speed
+	m.spin = spinner.New(spinner.WithSpinner(s), spinner.WithStyle(st.spinner))
 	if m.keys == nil {
 		m.keys = DefaultKeys()
 	}
@@ -198,6 +203,9 @@ func (m *Model) addPlaceholders() {
 func (m *Model) Init() tea.Cmd {
 	m.focus = m.initialFocus()
 	m.refocus()
+	if m.loading {
+		return m.spin.Tick
+	}
 	return nil
 }
 
@@ -238,7 +246,7 @@ func (m *Model) refocus() {
 // keeping the query.
 func (m *Model) load() {
 	m.cands = map[string]*row{}
-	m.message, m.errText, m.stale = "", "", false
+	m.message, m.errText = "", ""
 	m.reqID++
 
 	hist, vals := m.historyCands(), m.specCands()
@@ -439,9 +447,27 @@ func (m *Model) ranked() []row {
 	return all
 }
 
-// Update handles input and completion results.
+// Update handles input and completion results, and starts the spinner when
+// a load begins.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	wasLoading := m.loading
+	tm, cmd := m.update(msg)
+	if m.loading && !wasLoading {
+		cmd = tea.Batch(cmd, m.spin.Tick)
+	}
+	return tm, cmd
+}
+
+func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case spinner.TickMsg:
+		// Dropping ticks once loaded stops the spinner.
+		if !m.loading {
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.spin, cmd = m.spin.Update(msg)
+		return m, cmd
 	case tea.WindowSizeMsg:
 		// Terminals that don't report a size send 0; keep the default.
 		if msg.Width > 0 {
@@ -454,7 +480,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Done {
 			m.loading = false
 		}
-		m.stale = msg.Stale
 		if msg.Err != nil {
 			m.errText = msg.Err.Error()
 		}
@@ -741,14 +766,7 @@ func (m *Model) View() string {
 	if m.active != "" {
 		label += " [" + m.active + "]"
 	}
-	status := ""
-	switch {
-	case m.loading && m.stale:
-		status = m.st.dim.Render(" refreshing…")
-	case m.loading:
-		status = m.st.dim.Render(" loading…")
-	}
-	body = append(body, fmt.Sprintf("%s %s▏%s", ls.Bold(true).Render(label+":"), m.query, status))
+	body = append(body, fmt.Sprintf("%s %s▏", ls.Bold(true).Render(label+":"), m.query))
 
 	start := 0
 	if m.sel >= listHeight {
@@ -757,7 +775,11 @@ func (m *Model) View() string {
 	for i := start; i < len(m.rows) && i < start+listHeight; i++ {
 		body = append(body, m.renderRow(i))
 	}
-	if len(m.rows) == 0 && !m.loading {
+	switch {
+	case m.loading:
+		// Also shown over cached candidates while they are refreshed.
+		body = append(body, "  "+m.spin.View())
+	case len(m.rows) == 0:
 		body = append(body, m.st.dim.Render("  (no candidates, type a value)"))
 	}
 	if m.message != "" {

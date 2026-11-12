@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -191,6 +192,42 @@ func TestPickFromCompletion(t *testing.T) {
 	h.keys(key(tea.KeyEnter))
 	if got := h.m.cmd.Render(); got != "k get pods -n kube-system -o wide" {
 		t.Fatalf("result = %q", got)
+	}
+}
+
+func TestSpinner(t *testing.T) {
+	h := newHarness(t, "k get pods -n default -o wide", nil)
+	frame := spinner.MiniDot.Frames[0]
+	if strings.Contains(h.m.View(), frame) {
+		t.Fatalf("spinner shown after loading:\n%s", h.m.View())
+	}
+	if _, cmd := h.m.Update(spinner.TickMsg{}); cmd != nil {
+		t.Fatal("a tick after loading should stop the spinner")
+	}
+
+	// Moving to another slot starts a load, which starts the spinner.
+	if _, cmd := h.m.Update(key(tea.KeyTab)); !h.m.loading || cmd == nil {
+		t.Fatalf("loading %v, cmd %v", h.m.loading, cmd)
+	}
+	lines := strings.Split(h.m.View(), "\n")
+	query, spin := -1, -1
+	for i, l := range lines {
+		if strings.Contains(l, "▏") && query < 0 {
+			query = i
+		}
+		if strings.Contains(l, frame) {
+			spin = i
+		}
+	}
+	if query < 0 || spin <= query || strings.Contains(lines[query], "loading") {
+		t.Fatalf("spinner should be below the list:\n%s", h.m.View())
+	}
+	if _, cmd := h.m.Update(spinner.TickMsg{}); cmd == nil {
+		t.Fatal("the spinner should keep ticking while loading")
+	}
+	h.pump()
+	if strings.Contains(h.m.View(), frame) || strings.Contains(h.m.View(), spinner.MiniDot.Frames[1]) {
+		t.Fatalf("spinner shown after loading:\n%s", h.m.View())
 	}
 }
 
