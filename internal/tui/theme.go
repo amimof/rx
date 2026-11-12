@@ -21,6 +21,8 @@ const (
 	RoleArg = "arg"
 	// RoleSel is the selected candidate in the list.
 	RoleSel = "sel"
+	// RoleSpinner is the spinner shown while candidates load.
+	RoleSpinner = "spinner"
 	// RoleDim is secondary text: descriptions, status and the help line.
 	RoleDim = "dim"
 	// RoleErr is an error message.
@@ -47,16 +49,17 @@ type Theme map[string]Style
 // DefaultTheme returns the default theme.
 func DefaultTheme() Theme {
 	return Theme{
-		RoleHead:   {Bold: true},
-		RoleFlag:   {Fg: "4"},
-		RoleValue:  {Fg: "2"},
-		RoleArg:    {Fg: "3"},
-		RoleSel:    {Fg: "6", Bold: true},
-		RoleDim:    {Faint: true},
-		RoleErr:    {Fg: "1"},
-		RoleBorder: {Fg: "240", Faint: true},
-		RolePrompt: {Bold: true},
-		RoleFocus:  {Reverse: true},
+		RoleHead:    {Bold: true},
+		RoleFlag:    {Fg: "4"},
+		RoleValue:   {Fg: "2"},
+		RoleArg:     {Fg: "3"},
+		RoleSel:     {Fg: "6", Bold: true},
+		RoleSpinner: {Fg: "2"},
+		RoleDim:     {Faint: true},
+		RoleErr:     {Fg: "1"},
+		RoleBorder:  {Fg: "240", Faint: true},
+		RolePrompt:  {Bold: true},
+		RoleFocus:   {Reverse: true},
 	}
 }
 
