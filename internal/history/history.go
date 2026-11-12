@@ -92,6 +92,49 @@ func ReadZsh(r io.Reader) ([]Entry, error) {
 	return out, sc.Err()
 }
 
+// bashTimestamp reports whether line is a HISTTIMEFORMAT timestamp line
+// ("#1700000000") and returns the time.
+func bashTimestamp(line string) (int64, bool) {
+	if len(line) < 2 || line[0] != '#' {
+		return 0, false
+	}
+	for _, c := range line[1:] {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+	}
+	t, err := strconv.ParseInt(line[1:], 10, 64)
+	return t, err == nil
+}
+
+// ReadBash parses a bash history file. Without HISTTIMEFORMAT every line is
+// a command. With it, bash writes a "#<unix time>" line before each command,
+// and the lines up to the next timestamp are one command (multi-line
+// commands saved with lithist).
+func ReadBash(r io.Reader) ([]Entry, error) {
+	var out []Entry
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	// stamped is set by a timestamp line: the following lines up to the
+	// next timestamp belong to one entry.
+	stamped, open := false, false
+	var ts int64
+	for sc.Scan() {
+		line := sc.Text()
+		if t, ok := bashTimestamp(line); ok {
+			stamped, open, ts = true, false, t
+			continue
+		}
+		if stamped && open {
+			out[len(out)-1].Cmd += "\n" + line
+			continue
+		}
+		out = append(out, Entry{Time: ts, Cmd: line})
+		open = stamped
+	}
+	return out, sc.Err()
+}
+
 // Stat records how often and how recently a value was used.
 type Stat struct {
 	Count int

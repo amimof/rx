@@ -14,7 +14,7 @@ import (
 func newInitCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "init SHELL",
-		Short: `Print the shell widget (zsh: eval "$(rx init zsh)")`,
+		Short: `Print the shell widget (eval "$(rx init zsh)" or "$(rx init bash)")`,
 		Long: `Print the shell widget. The key binding and log file come from the config
 file; RX_KEY and RX_LOG set in the shell override them.`,
 		RunE: func(cmd *cobra.Command, args []string) error {

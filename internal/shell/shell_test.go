@@ -9,6 +9,8 @@ func TestResolve(t *testing.T) {
 	for _, tt := range []struct{ name, env, want, err string }{
 		{"zsh", "/bin/bash", "zsh", ""},
 		{"", "/usr/bin/zsh", "zsh", ""},
+		{"", "/bin/bash", "bash", ""},
+		{"bash", "/usr/bin/zsh", "bash", ""},
 		{"", "/bin/unknown", Default, ""},
 		{"", "", Default, ""},
 		{"nosuch", "/usr/bin/zsh", "", `unsupported shell "nosuch"`},

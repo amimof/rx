@@ -103,6 +103,10 @@ func TestInit(t *testing.T) {
 	if out, _ := rx(t, nil, "init", "zsh"); !strings.Contains(out, "zle -N rx-edit") {
 		t.Errorf("init zsh = %.80q", out)
 	}
+	cfg := configHome(t, "key: '^[e'\n")
+	if out, _ := rx(t, []string{cfg}, "init", "bash"); !strings.Contains(out, "_rx_key='^[e'\n") || !strings.Contains(out, "rx-bind") {
+		t.Errorf("init bash = %.120q", out)
+	}
 	if out, errOut := rx(t, nil, "init", "nosuch"); out != "" || !strings.Contains(errOut, `unsupported shell "nosuch"`) {
 		t.Errorf("init nosuch: stdout %q, stderr %q", out, errOut)
 	}
