@@ -1,5 +1,7 @@
 # Runs an interactive zsh under zpty with ZDOTDIR=<dir> and plays steps
-# against it. The terminal output is written to <dir>/transcript.
+# against it. The terminal output is written to <dir>/transcript. Output is
+# drained during every step: a full pty buffer blocks the programs writing
+# to the terminal, like rx redrawing its editor.
 #
 # Usage: zsh -f driver.zsh <dir> <step>...
 #
@@ -34,7 +36,8 @@ for step in "$@"; do
   case $step in
     (key:*)
       zpty -w -n z "${step#key:}"
-      sleep 0.05 ;;
+      sleep 0.05
+      drain ;;
     (expect:*)
       until drain; [[ $seen == *"${step#expect:}"* ]]; do
         (( EPOCHREALTIME > deadline )) && { print -u2 "timeout: $step"; finish 1 }
@@ -45,10 +48,15 @@ for step in "$@"; do
     (file:*)
       until [[ -e ${step#file:} ]]; do
         (( EPOCHREALTIME > deadline )) && { print -u2 "timeout: $step"; finish 1 }
+        drain
         sleep 0.05
       done ;;
     (sleep:*)
-      sleep ${step#sleep:} ;;
+      deadline=$(( EPOCHREALTIME + ${step#sleep:} ))
+      while (( EPOCHREALTIME < deadline )); do
+        drain
+        sleep 0.05
+      done ;;
     (*)
       print -u2 "bad step: $step"
       finish 2 ;;

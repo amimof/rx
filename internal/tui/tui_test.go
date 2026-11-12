@@ -66,7 +66,7 @@ func newRegHarness(t *testing.T, reg *spec.Registry, line string, hist *history.
 	h.m = newModel(Options{
 		Cmd: cmd, Spec: reg.Lookup(cmd.Name), History: hist,
 		Engine: engine.New(nil, nil),
-	}, newStyles(lipgloss.NewRenderer(os.Stderr)))
+	}, newStyles(lipgloss.NewRenderer(os.Stderr), nil))
 	h.m.ctx = context.Background()
 	h.m.send = func(u engine.Update) { h.ups <- u }
 	h.m.Init()
@@ -158,7 +158,7 @@ focus: resource
 		reg.Add(sp)
 		c := spec.Classifier{Specs: reg, Infer: takesAll{}, Aliases: spec.Aliases{"k": "kubecolor"}}
 		cmd := c.Classify(parse.Parse(tt.line), 0)
-		m := newModel(Options{Cmd: cmd, Spec: reg.Lookup(cmd.Name)}, newStyles(lipgloss.NewRenderer(os.Stderr)))
+		m := newModel(Options{Cmd: cmd, Spec: reg.Lookup(cmd.Name)}, newStyles(lipgloss.NewRenderer(os.Stderr), nil))
 		if got := m.cmd.Slots[m.initialFocus()].Key; got != tt.want {
 			t.Errorf("%q: focus = %s, want %s", tt.line, got, tt.want)
 		}
