@@ -29,6 +29,8 @@ func TestScript(t *testing.T) {
 // config sets up fixture commands and completions. %[1]s is the test
 // directory, %[2]s the rx binary and %[3]s the widget script.
 const config = `
+# The driver waits for this pid to exit before the test removes the dir.
+echo $fish_pid > %[1]s/pid
 # fish 4's --no-config also turns on private mode, which keeps history out
 # of the history file.
 set -ge fish_private_mode
@@ -521,8 +523,8 @@ func buildRx(t *testing.T) string {
 }
 
 // TestWidgetEndToEnd drives the real rx binary: open the editor on
-// "fixture b", fuzzy-pick alpha from the shell's completion, accept, and
-// run with Ctrl-E.
+// "fixture b", filter the shell's completion to alpha and pick it with
+// Ctrl-N, accept, and run with Ctrl-E.
 func TestWidgetEndToEnd(t *testing.T) {
 	newShell(t, "") // skip early without fish or zsh
 	bin := buildRx(t)
@@ -536,6 +538,7 @@ func TestWidgetEndToEnd(t *testing.T) {
 	steps := append(typeAndEdit("fixture b"),
 		"expect:first host", // the shell's completion, with its description, reached the editor
 		"key:alp",
+		"key:\x0e", // typing selects only an exact match; Ctrl-N picks alpha
 		"expect:alpha",
 		"key:\r",
 	)
@@ -546,7 +549,7 @@ func TestWidgetEndToEnd(t *testing.T) {
 
 	// Ctrl-E accepts and runs.
 	s = setup()
-	s.run(append(typeAndEdit("fixture b"), "expect:first host", "key:alp", "expect:alpha", "key:\x05", "file:"+filepath.Join(s.dir, "ran"))...)
+	s.run(append(typeAndEdit("fixture b"), "expect:first host", "key:alp", "key:\x0e", "expect:alpha", "key:\x05", "file:"+filepath.Join(s.dir, "ran"))...)
 	if got := s.read("ran"); got != "fixture alpha\n" {
 		t.Errorf("after Ctrl-E ran %q", got)
 	}
