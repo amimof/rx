@@ -14,7 +14,10 @@
 // the same order (the request fifo for writing, then the response fifo for
 // reading) and unlinks them. rx must stay in the shell's process group so
 // it may read /dev/tty, where it draws the editor. Neither side opens a fifo
-// read-write, so rx exiting is seen by the widget as EOF.
+// read-write, so rx exiting is seen by the widget as EOF. A widget that
+// can't keep descriptors open (fish) may instead run rx as a foreground
+// job whose stdout is piped into the widget, with only stdin on a fifo; rx
+// then owns the terminal.
 //
 // Invocation:
 //

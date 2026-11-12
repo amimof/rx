@@ -11,6 +11,7 @@ func TestResolve(t *testing.T) {
 		{"", "/usr/bin/zsh", "zsh", ""},
 		{"", "/bin/bash", "bash", ""},
 		{"bash", "/usr/bin/zsh", "bash", ""},
+		{"", "/opt/homebrew/bin/fish", "fish", ""},
 		{"", "/bin/unknown", Default, ""},
 		{"", "", Default, ""},
 		{"nosuch", "/usr/bin/zsh", "", `unsupported shell "nosuch"`},

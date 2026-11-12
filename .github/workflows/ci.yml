@@ -37,11 +37,12 @@ jobs:
           go-version-file: go.mod
       - name: Install zsh
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y zsh
-      # /bin/bash on macOS is 3.2; the widget needs 4.1 or newer.
-      - name: Install bash
+        run: sudo apt-get update && sudo apt-get install -y zsh fish
+      # /bin/bash on macOS is 3.2; the widget needs 4.1 or newer. Linux gets
+      # fish 3.x from apt and macOS fish 4.x from Homebrew.
+      - name: Install bash and fish
         if: runner.os == 'macOS'
-        run: brew install bash
+        run: brew install bash fish
       - name: Test
         run: make test TESTFLAGS=-race CGO_ENABLED=1
 

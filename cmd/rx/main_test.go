@@ -107,6 +107,9 @@ func TestInit(t *testing.T) {
 	if out, _ := rx(t, []string{cfg}, "init", "bash"); !strings.Contains(out, "_rx_key='^[e'\n") || !strings.Contains(out, "rx-bind") {
 		t.Errorf("init bash = %.120q", out)
 	}
+	if out, _ := rx(t, []string{cfg}, "init", "fish"); !strings.Contains(out, "set -g _rx_key '^[e'\n") || !strings.Contains(out, "function rx-bind") {
+		t.Errorf("init fish = %.120q", out)
+	}
 	if out, errOut := rx(t, nil, "init", "nosuch"); out != "" || !strings.Contains(errOut, `unsupported shell "nosuch"`) {
 		t.Errorf("init nosuch: stdout %q, stderr %q", out, errOut)
 	}
