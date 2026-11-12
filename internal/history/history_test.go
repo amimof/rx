@@ -84,6 +84,43 @@ func TestReadBash(t *testing.T) {
 	}
 }
 
+func TestReadFish(t *testing.T) {
+	for _, tt := range []struct {
+		name, in string
+		want     []Entry
+	}{
+		{"entries", "- cmd: ls -la\n  when: 1700000000\n- cmd: git status\n  when: 1700000100\n  paths:\n    - status\n", []Entry{
+			{1700000000, "ls -la"}, {1700000100, "git status"},
+		}},
+		{"escapes", `- cmd: for f in a b\n  echo $f\nend
+  when: 1700000200
+- cmd: echo a\\nb \x
+  when: 1700000300
+`, []Entry{
+			{1700000200, "for f in a b\n  echo $f\nend"}, {1700000300, `echo a\nb \x`},
+		}},
+		{"no time", "- cmd: ls\n", []Entry{{Cmd: "ls"}}},
+		// Load reads appended data starting at an entry boundary.
+		{"appended", "- cmd: k get pods\n  when: 1700000400\n", []Entry{{1700000400, "k get pods"}}},
+		{"empty", "", nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			es, err := ReadFish(strings.NewReader(tt.in))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(es) != len(tt.want) {
+				t.Fatalf("got %+v, want %+v", es, tt.want)
+			}
+			for i := range es {
+				if es[i] != tt.want[i] {
+					t.Errorf("entry %d = %+v, want %+v", i, es[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestUnmetafy(t *testing.T) {
 	// "é" is 0xc3 0xa9; zsh metafies bytes >= 0x83, but only 0x83..0x9f and
 	// a few others in practice. Exercise the transform itself.

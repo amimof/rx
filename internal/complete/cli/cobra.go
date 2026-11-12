@@ -15,8 +15,9 @@ type Cobra struct{}
 
 func (Cobra) Name() string { return "cobra" }
 
-// Marker is the hidden subcommand cobra's generated scripts call.
-func (Cobra) Marker() string { return "__complete" }
+// Markers is the hidden subcommand cobra's generated scripts call, in
+// every shell.
+func (Cobra) Markers() []string { return []string{"__complete"} }
 
 func (Cobra) Command(argv []string) ([]string, []string) {
 	return append([]string{"__complete"}, argv[1:]...), nil

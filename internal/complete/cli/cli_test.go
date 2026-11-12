@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -48,9 +49,17 @@ func TestClapParse(t *testing.T) {
 
 func TestRegistry(t *testing.T) {
 	for _, p := range Protocols {
-		if Lookup(p.Name()) != p || ByMarker(p.Marker()) != p {
-			t.Errorf("%s: lookup by name or marker failed", p.Name())
+		if Lookup(p.Name()) != p {
+			t.Errorf("%s: lookup by name failed", p.Name())
 		}
+		for _, m := range p.Markers() {
+			if ByMarker(m) != p {
+				t.Errorf("%s: lookup by marker %q failed", p.Name(), m)
+			}
+		}
+	}
+	if m := Markers(); !slices.Contains(m, "COMPLETE=fish") || m[0] != "__complete" {
+		t.Errorf("Markers() = %q", m)
 	}
 	if Lookup("nope") != nil || ByMarker("") != nil || ByMarker("nope") != nil {
 		t.Error("unknown names and markers should not resolve")

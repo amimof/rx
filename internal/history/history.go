@@ -135,6 +135,54 @@ func ReadBash(r io.Reader) ([]Entry, error) {
 	return out, sc.Err()
 }
 
+// ReadFish parses a fish history file. Each entry starts with a
+// "- cmd: <command>" line, followed by "  when: <unix time>" and an optional
+// "  paths:" list. fish escapes backslashes and newlines in the command.
+// Other lines are skipped.
+func ReadFish(r io.Reader) ([]Entry, error) {
+	var out []Entry
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	for sc.Scan() {
+		line := sc.Text()
+		if cmd, ok := strings.CutPrefix(line, "- cmd: "); ok {
+			out = append(out, Entry{Cmd: unescapeFish(cmd)})
+			continue
+		}
+		if ts, ok := strings.CutPrefix(line, "  when: "); ok && len(out) > 0 {
+			if t, err := strconv.ParseInt(ts, 10, 64); err == nil {
+				out[len(out)-1].Time = t
+			}
+		}
+	}
+	return out, sc.Err()
+}
+
+// unescapeFish reverses fish's history escaping: \\ is a backslash and \n
+// a newline; any other backslash stands for itself.
+func unescapeFish(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var sb strings.Builder
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			switch s[i+1] {
+			case '\\':
+				sb.WriteByte('\\')
+				i++
+				continue
+			case 'n':
+				sb.WriteByte('\n')
+				i++
+				continue
+			}
+		}
+		sb.WriteByte(s[i])
+	}
+	return sb.String()
+}
+
 // Stat records how often and how recently a value was used.
 type Stat struct {
 	Count int

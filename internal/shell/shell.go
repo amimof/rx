@@ -15,6 +15,7 @@ import (
 
 	"github.com/amimof/rx/internal/history"
 	"github.com/amimof/rx/internal/shell/bash"
+	"github.com/amimof/rx/internal/shell/fish"
 	"github.com/amimof/rx/internal/shell/zsh"
 )
 
@@ -77,6 +78,22 @@ var shells = map[string]*Shell{
 		// The widget converts bash 4's byte offsets.
 		Cursor: Chars,
 	},
+	"fish": {
+		Name:        "fish",
+		Script:      func(o ScriptOptions) string { return fish.Script(fish.Options(o)) },
+		HistFile:    fishHistFile,
+		ReadHistory: history.ReadFish,
+		Cursor:      Chars,
+	},
+}
+
+// fishHistFile is fish's default history file. The widget sets
+// RX_HISTFILE from $fish_history, which names other sessions.
+func fishHistFile() string {
+	if d := os.Getenv("XDG_DATA_HOME"); d != "" {
+		return filepath.Join(d, "fish", "fish_history")
+	}
+	return home(".local", "share", "fish", "fish_history")
 }
 
 // Default is used when no shell is named and $SHELL is not supported.

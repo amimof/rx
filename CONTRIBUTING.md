@@ -4,7 +4,7 @@ Issues and pull requests are welcome. rx is an early MVP, so please open an issu
 
 ## Setup
 
-You need [Go](https://go.dev/dl/) (version in [`go.mod`](go.mod)), `zsh` and `bash` 4.1+ for the widget tests (they are skipped without them; the bash tests also need zsh, whose zpty module drives the terminal) and [golangci-lint](https://golangci-lint.run) for linting.
+You need [Go](https://go.dev/dl/) (version in [`go.mod`](go.mod)), `zsh`, `bash` 4.1+ and `fish` 3.4+ for the widget tests (they are skipped without them; the bash and fish tests also need zsh, whose zpty module drives the terminal) and [golangci-lint](https://golangci-lint.run) for linting.
 
 ```sh
 make build   # bin/rx

@@ -35,12 +35,12 @@ History search gets you close, but then you still have to edit the namespace, th
 Suggestions come from:
 
 - **Your shell history**: values you've used before, most frequent and recent first.
-- **Shell completion**: the same values you'd get from pressing Tab in zsh or bash, such as namespaces, git branches or ssh hosts.
+- **Shell completion**: the same values you'd get from pressing Tab in zsh, bash or fish, such as namespaces, git branches or ssh hosts.
 - **Plugins**: small YAML files that add shortcuts and extra knowledge about a command.
 
 ## Install
 
-rx supports **zsh** and **bash** 4.1 or newer, on Linux and macOS.
+rx supports **zsh**, **bash** 4.1 or newer and **fish** 3.4 or newer, on Linux and macOS.
 
 Download the latest release for your platform from [GitHub Releases](https://github.com/amimof/rx/releases) and put `rx` on your `PATH`:
 
@@ -57,6 +57,7 @@ Then add the line for your shell and open a new shell:
 ```sh
 eval "$(rx init zsh)"     # ~/.zshrc
 eval "$(rx init bash)"    # ~/.bashrc
+rx init fish | source     # ~/.config/fish/config.fish
 ```
 
 macOS ships bash 3.2 as `/bin/bash`, which is too old. Use a newer bash, e.g. from Homebrew (`brew install bash`). With bash, rx runs `history -a` before it opens, so it sees the commands of the current session. In bash this appends them to `$HISTFILE` earlier than bash would by itself.
@@ -120,7 +121,7 @@ Theme roles are `head` (the command word), `flag`, `value` (a flag's value), `ar
 
 Environment variables override the file: `RX_KEY`, `RX_LOG`, `RX_PROMPT`, and `RX_COMPLETE` and `RX_KEYS_<ACTION>` with a comma-separated list, e.g. `RX_COMPLETE=history,shell` or `RX_KEYS_NEXT_SLOT=tab,ctrl+f`. The theme can only be set in the file.
 
-`key` and `log` are baked into the widget by `rx init`, so changes take effect in new shells. To use a different key than Ctrl-X Ctrl-X without the config file, set `RX_KEY` before the `eval` line, or call `rx-bind` after it. The key is written in caret notation (`^X^X`, `^[r` for Alt+r), which both shells accept. bash also takes readline syntax (`\C-x\C-x`). The default replaces the `exchange-point-and-mark` binding of zsh and bash in emacs mode; pick another key if you use it.
+`key` and `log` are baked into the widget by `rx init`, so changes take effect in new shells. To use a different key than Ctrl-X Ctrl-X without the config file, set `RX_KEY` before the `eval` line, or call `rx-bind` after it. The key is written in caret notation (`^X^X`, `^[r` for Alt+r), which every shell accepts. bash also takes readline syntax (`\C-x\C-x`), and fish its own escapes (`\cx\cx`) and, from fish 4, key names (`ctrl-x,ctrl-x`). The default replaces the `exchange-point-and-mark` binding of zsh and bash in emacs mode; pick another key if you use it.
 
 ```sh
 RX_KEY='^[r'     # Alt+r
@@ -128,6 +129,8 @@ eval "$(rx init zsh)"
 ```
 
 In bash, rx is bound in the emacs, vi-insert and vi-command keymaps through a readline macro. That is how Ctrl+E can run the command as if Enter was pressed: it uses the internal sequences `\C-x\C-^e` and `\C-x\C-^a`.
+
+In fish, rx is bound in the `default` and `insert` modes, which cover emacs and vi key bindings. fish binds a single Ctrl-X to copy to the clipboard. That still works with the default key, but fish waits for its key sequence timeout first (`fish_sequence_key_delay_ms`) in case a second Ctrl-X follows. rx loads aliases made with `alias`. Abbreviations need no support, since fish expands them before rx sees the command.
 
 ## Plugins
 
@@ -196,7 +199,7 @@ The `cli` source runs the command's own completion through the protocol of the f
 | [cobra](https://github.com/spf13/cobra) (Go) | `cmd __complete <args>` |
 | [clap](https://github.com/clap-rs/clap) (Rust) | `COMPLETE=fish cmd -- cmd <args>`, from `clap_complete::CompleteEnv` |
 
-rx detects the framework from the command's completion function in zsh or bash, so it never runs a command that may not support the protocol. A plugin can set `cli:` to `cobra` or `clap` to skip detection, which also makes `cli` work outside the shell widget, e.g. in `rx complete`. With `cli` enabled, rx uses the command's own completion when it knows the framework, and asks the shell otherwise. If the command turns out not to speak the protocol, rx falls back to the shell for the rest of the session.
+rx detects the framework from the command's completion function in zsh, bash or fish, so it never runs a command that may not support the protocol. A plugin can set `cli:` to `cobra` or `clap` to skip detection, which also makes `cli` work outside the shell widget, e.g. in `rx complete`. With `cli` enabled, rx uses the command's own completion when it knows the framework, and asks the shell otherwise. If the command turns out not to speak the protocol, rx falls back to the shell for the rest of the session.
 
 Only clap programs that use `CompleteEnv` with its default `COMPLETE` variable (like [jj](https://www.jj-vcs.dev)) have a protocol rx can call. Many Rust tools ship static completion scripts instead, which `shell` keeps handling.
 
@@ -206,6 +209,7 @@ In the editor, `Ctrl+S` switches to a single source for the rest of the session.
 
 - Run `rx-doctor` in your shell to see which keys are bound and whether rx can find your history.
 - bash: the widget is built on readline's `bind -x`. Line editors that replace readline, such as ble.sh, are untested.
+- fish: rx sees the commands of the current session only if fish writes history, which it doesn't in private mode (`fish --private`).
 - If something goes wrong, rx shows a message below the prompt. More detail is in `~/.cache/rx/rx.log`.
 
 ## Contributing

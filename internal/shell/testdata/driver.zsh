@@ -1,15 +1,16 @@
 # Runs an interactive shell under zpty and plays steps against it: zsh with
-# ZDOTDIR=<dir>, or bash with <dir>/.bashrc. The terminal output is written
-# to <dir>/transcript. Output is drained during every step: a full pty
-# buffer blocks the programs writing to the terminal, like rx redrawing its
-# editor.
+# ZDOTDIR=<dir>, bash with <dir>/.bashrc, or fish with <dir>/config.fish.
+# The terminal output is written to <dir>/transcript. Output is drained
+# during every step: a full pty buffer blocks the programs writing to the
+# terminal, like rx redrawing its editor.
 #
-# Usage: zsh -f driver.zsh <dir> <path to zsh or bash> <step>...
+# Usage: zsh -f driver.zsh <dir> <path to zsh, bash or fish> <step>...
 #
-# The shell is given by path since zsh may reset PATH at startup. Both
-# shells start without the system rc files (zsh -d, bash --rcfile), so the
-# tests depend only on the rc file they write: Debian's /etc/zsh/zshrc, for
-# one, runs compinit, which stops at a prompt on insecure fpath directories.
+# The shell is given by path since zsh may reset PATH at startup. The
+# shells start without the system rc files (zsh -d, bash --rcfile, fish
+# --no-config), so the tests depend only on the rc file they write:
+# Debian's /etc/zsh/zshrc, for one, runs compinit, which stops at a prompt
+# on insecure fpath directories. fish keeps its data under <dir>.
 #
 # Steps:
 #   key:<bytes>     type bytes (no newline is added)
@@ -28,6 +29,9 @@ drain() {
   local chunk
   while zpty -rt z chunk 2>/dev/null; do
     seen+=$chunk
+    # fish 4 waits for the answer to its Primary Device Attributes query
+    # before it shows a prompt; answer as a VT220-class terminal.
+    [[ $chunk == *$'\e[0c'* || $chunk == *$'\e[c'* ]] && zpty -w -n z $'\e[?62c'
   done
 }
 finish() {
@@ -40,6 +44,10 @@ finish() {
 case ${sh:t} in
   (zsh) zpty -b z $sh -d -i ;;
   (bash) zpty -b z $sh --noprofile --rcfile $dir/.bashrc -i ;;
+  (fish)
+    export XDG_CONFIG_HOME=$dir/config XDG_DATA_HOME=$dir/data
+    # zpty evals its command, hence (q).
+    zpty -b z $sh --no-config -C ${(q):-"source $dir/config.fish"} -i ;;
   (*) print -u2 "bad shell: $sh"; exit 2 ;;
 esac
 local step deadline

@@ -16,8 +16,9 @@ type Clap struct{}
 
 func (Clap) Name() string { return "clap" }
 
-// Marker is a variable only clap's dynamic zsh registration sets.
-func (Clap) Marker() string { return "_CLAP_COMPLETE_INDEX" }
+// Markers are a variable only clap's dynamic zsh and bash registrations
+// set, and the protocol call in its fish registration.
+func (Clap) Markers() []string { return []string{"_CLAP_COMPLETE_INDEX", "COMPLETE=fish"} }
 
 func (Clap) Command(argv []string) ([]string, []string) {
 	return append([]string{"--"}, argv...), []string{"COMPLETE=fish"}

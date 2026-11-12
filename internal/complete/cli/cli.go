@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 
 	"github.com/amimof/rx/internal/complete"
 )
@@ -26,9 +27,10 @@ var ErrUnsupported = errors.New("command does not support the completion protoco
 type Protocol interface {
 	// Name identifies the protocol, e.g. in a plugin's cli setting.
 	Name() string
-	// Marker is a string found in the shell completion functions the
+	// Markers are strings found in the shell completion functions the
 	// framework generates, used to detect it without running the command.
-	Marker() string
+	// Shells differ, so there may be one per shell.
+	Markers() []string
 	// Command returns the arguments after the command word and the extra
 	// environment that complete argv, whose last element is the word being
 	// completed.
@@ -56,7 +58,7 @@ func ByMarker(marker string) Protocol {
 		return nil
 	}
 	for _, p := range Protocols {
-		if p.Marker() == marker {
+		if slices.Contains(p.Markers(), marker) {
 			return p
 		}
 	}
@@ -72,11 +74,11 @@ func Names() []string {
 	return out
 }
 
-// Markers returns the protocol markers in detection order.
+// Markers returns the protocols' markers in detection order.
 func Markers() []string {
-	out := make([]string, len(Protocols))
-	for i, p := range Protocols {
-		out[i] = p.Marker()
+	var out []string
+	for _, p := range Protocols {
+		out = append(out, p.Markers()...)
 	}
 	return out
 }
