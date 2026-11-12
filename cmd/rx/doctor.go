@@ -18,7 +18,7 @@ import (
 func newDoctorCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "doctor [--shell SHELL]",
-		Short: "Check the setup (in zsh, run rx-doctor for key bindings too)",
+		Short: "Check the setup (run rx-doctor in the shell for key bindings too)",
 		Args:  cobra.NoArgs,
 	}
 	shellName := addShellFlag(cmd)

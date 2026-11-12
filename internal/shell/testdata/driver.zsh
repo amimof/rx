@@ -1,9 +1,15 @@
-# Runs an interactive zsh under zpty with ZDOTDIR=<dir> and plays steps
-# against it. The terminal output is written to <dir>/transcript. Output is
-# drained during every step: a full pty buffer blocks the programs writing
-# to the terminal, like rx redrawing its editor.
+# Runs an interactive shell under zpty and plays steps against it: zsh with
+# ZDOTDIR=<dir>, or bash with <dir>/.bashrc. The terminal output is written
+# to <dir>/transcript. Output is drained during every step: a full pty
+# buffer blocks the programs writing to the terminal, like rx redrawing its
+# editor.
 #
-# Usage: zsh -f driver.zsh <dir> <step>...
+# Usage: zsh -f driver.zsh <dir> <path to zsh or bash> <step>...
+#
+# The shell is given by path since zsh may reset PATH at startup. Both
+# shells start without the system rc files (zsh -d, bash --rcfile), so the
+# tests depend only on the rc file they write: Debian's /etc/zsh/zshrc, for
+# one, runs compinit, which stops at a prompt on insecure fpath directories.
 #
 # Steps:
 #   key:<bytes>     type bytes (no newline is added)
@@ -11,9 +17,11 @@
 #   file:<path>     wait until path exists, fail after 5s
 #   sleep:<secs>    sleep
 zmodload zsh/zpty zsh/datetime || exit 2
-dir=$1
-shift
+dir=$1 sh=$2
+shift 2
 export ZDOTDIR=$dir TERM=xterm-256color
+# Keep the user's readline settings out of bash.
+export INPUTRC=$dir/inputrc
 
 typeset -g seen=
 drain() {
@@ -29,7 +37,11 @@ finish() {
   exit $1
 }
 
-zpty -b z zsh -i
+case ${sh:t} in
+  (zsh) zpty -b z $sh -d -i ;;
+  (bash) zpty -b z $sh --noprofile --rcfile $dir/.bashrc -i ;;
+  (*) print -u2 "bad shell: $sh"; exit 2 ;;
+esac
 local step deadline
 for step in "$@"; do
   deadline=$(( EPOCHREALTIME + 5 ))

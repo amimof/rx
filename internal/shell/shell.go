@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/amimof/rx/internal/history"
+	"github.com/amimof/rx/internal/shell/bash"
 	"github.com/amimof/rx/internal/shell/zsh"
 )
 
@@ -21,15 +22,25 @@ import (
 type CursorUnit int
 
 const (
-	// Chars counts characters (zsh CURSOR, fish commandline -C).
+	// Chars counts characters (zsh CURSOR, bash 5 READLINE_POINT, fish
+	// commandline -C).
 	Chars CursorUnit = iota
-	// Bytes counts bytes (bash READLINE_POINT).
+	// Bytes counts bytes.
 	Bytes
 )
 
 // ScriptOptions are the values `rx init` bakes into a widget script: the rx
 // binary and the configured key binding and log file.
-type ScriptOptions = zsh.Options
+type ScriptOptions struct {
+	// Bin is the rx binary the widget runs.
+	Bin string
+	// Key is the default key binding in caret notation (^X^X). RX_KEY set
+	// in the shell still overrides it.
+	Key string
+	// Log is the default log file, overridden by RX_LOG. Empty keeps the
+	// widget's default.
+	Log string
+}
 
 // Shell describes one supported shell.
 type Shell struct {
@@ -53,10 +64,18 @@ func home(elem ...string) string {
 var shells = map[string]*Shell{
 	"zsh": {
 		Name:        "zsh",
-		Script:      zsh.Script,
+		Script:      func(o ScriptOptions) string { return zsh.Script(zsh.Options(o)) },
 		HistFile:    func() string { return home(".zsh_history") },
 		ReadHistory: history.ReadZsh,
 		Cursor:      Chars,
+	},
+	"bash": {
+		Name:        "bash",
+		Script:      func(o ScriptOptions) string { return bash.Script(bash.Options(o)) },
+		HistFile:    func() string { return home(".bash_history") },
+		ReadHistory: history.ReadBash,
+		// The widget converts bash 4's byte offsets.
+		Cursor: Chars,
 	},
 }
 

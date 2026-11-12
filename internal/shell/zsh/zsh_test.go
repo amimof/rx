@@ -72,13 +72,15 @@ source %[3]s
 type shell struct {
 	t   *testing.T
 	dir string
+	zsh string
 }
 
 // newShell prepares a ZDOTDIR running the widget with bin as rx. Tests are
 // skipped without zsh.
 func newShell(t *testing.T, bin string) *shell {
 	t.Helper()
-	if _, err := exec.LookPath("zsh"); err != nil {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
 		t.Skip("zsh not installed")
 	}
 	dir := t.TempDir()
@@ -86,7 +88,7 @@ func newShell(t *testing.T, bin string) *shell {
 	if err := os.WriteFile(filepath.Join(dir, ".zshrc"), fmt.Appendf(nil, zshrc, dir, bin, script), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return &shell{t: t, dir: dir}
+	return &shell{t: t, dir: dir, zsh: zsh}
 }
 
 // fake returns a shell whose rx sends the given requests.
@@ -144,8 +146,8 @@ func (s *shell) transcript() string {
 // run plays steps (see testdata/driver.zsh) after the first prompt.
 func (s *shell) run(steps ...string) {
 	s.t.Helper()
-	args := append([]string{"-f", "testdata/driver.zsh", s.dir, "expect:> "}, steps...)
-	out, err := exec.Command("zsh", args...).CombinedOutput()
+	args := append([]string{"-f", "../testdata/driver.zsh", s.dir, s.zsh, "expect:> "}, steps...)
+	out, err := exec.Command(s.zsh, args...).CombinedOutput()
 	if err != nil {
 		log, _ := os.ReadFile(filepath.Join(s.dir, "log"))
 		s.t.Fatalf("driver: %v %s\ntranscript:\n%q\nrx log:\n%s", err, out, s.transcript(), log)

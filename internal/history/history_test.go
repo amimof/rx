@@ -51,6 +51,39 @@ func TestReadZsh(t *testing.T) {
 	}
 }
 
+func TestReadBash(t *testing.T) {
+	for _, tt := range []struct {
+		name, in string
+		want     []Entry
+	}{
+		{"plain", "ls -la\ngit status\n\n#not a timestamp\n", []Entry{
+			{Cmd: "ls -la"}, {Cmd: "git status"}, {Cmd: ""}, {Cmd: "#not a timestamp"},
+		}},
+		{"timestamps", "#1700000000\nls -la\n#1700000100\nfor f in a b; do\necho $f\ndone\n#1700000200\ngit status\n", []Entry{
+			{1700000000, "ls -la"}, {1700000100, "for f in a b; do\necho $f\ndone"}, {1700000200, "git status"},
+		}},
+		// Load reads appended data starting at an entry boundary, which with
+		// timestamps is the timestamp line.
+		{"appended", "#1700000300\nk get pods\n", []Entry{{1700000300, "k get pods"}}},
+		{"no trailing newline", "#1700000000\nls", []Entry{{1700000000, "ls"}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			es, err := ReadBash(strings.NewReader(tt.in))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(es) != len(tt.want) {
+				t.Fatalf("got %+v, want %+v", es, tt.want)
+			}
+			for i := range es {
+				if es[i] != tt.want[i] {
+					t.Errorf("entry %d = %+v, want %+v", i, es[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
 func TestUnmetafy(t *testing.T) {
 	// "é" is 0xc3 0xa9; zsh metafies bytes >= 0x83, but only 0x83..0x9f and
 	// a few others in practice. Exercise the transform itself.
