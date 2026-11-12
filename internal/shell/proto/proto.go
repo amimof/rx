@@ -147,7 +147,7 @@ func (c *Client) do(ctx context.Context, fn func(kind string, fields []string), 
 	case <-ctx.Done():
 		// The shell is still busy; wait for it so the stream stays in sync,
 		// but report the timeout to the caller.
-		go func() { <-done }()
+		go func() { <-done }() //nolint:errcheck // only drained, the error is reported below
 		c.err = fmt.Errorf("%s completion timed out; backend disabled for this session", c.shell)
 		return ctx.Err()
 	}

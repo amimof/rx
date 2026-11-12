@@ -295,10 +295,10 @@ func TestProgramTabThroughSlots(t *testing.T) {
 	go func() {
 		// Twice around all slots, including "+ flag", then accept.
 		for range 2 * (len(cmd.Slots) + 1) {
-			w.Write([]byte("\t"))
+			_, _ = w.Write([]byte("\t"))
 			time.Sleep(20 * time.Millisecond)
 		}
-		w.Write([]byte("\r"))
+		_, _ = w.Write([]byte("\r"))
 	}()
 	select {
 	case r := <-done:
