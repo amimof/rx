@@ -29,7 +29,7 @@ History search gets you close, but then you still have to edit the namespace, th
 
 1. Type or recall a command, e.g. `find /var/log -name "*.log" -mtime -1`.
 2. Press **Ctrl-X Ctrl-X**. A small editor opens below your prompt.
-3. Press **Tab** to move between slots and type to fuzzy-search values.
+3. Press **Tab** to move between slots. Type a value, or pick one of the suggestions with **↓**.
 4. Press **Enter**. The edited command is put back in your prompt. Press Enter again to run it.
 
 Suggestions come from:
@@ -73,8 +73,8 @@ rx-doctor
 | Key | Action |
 |---|---|
 | `Tab` / `Shift+Tab` | Next / previous slot |
-| Type | Fuzzy-search values for the slot |
-| `↑` `↓` | Pick a value |
+| Type | Type a value. Matching suggestions are listed, but only an exact match is picked, so what you typed is used. On `+ flag`, the best match is picked |
+| `↑` `↓` | Pick a value, `↑` from the top goes back to what you typed |
 | `Ctrl+N` / `Ctrl+P` | Same as `↓` / `↑` |
 | `Enter` | Put the command back in the prompt |
 | `Ctrl+E` | Put the command back in the prompt and run it |

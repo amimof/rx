@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,7 +16,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/charmbracelet/x/cellbuf"
+	"github.com/muesli/termenv"
 
+	"github.com/amimof/rx/internal/complete"
 	"github.com/amimof/rx/internal/engine"
 	"github.com/amimof/rx/internal/history"
 	"github.com/amimof/rx/internal/model"
@@ -182,16 +186,76 @@ func TestPickFromCompletion(t *testing.T) {
 	if len(h.m.rows) != 3 {
 		t.Fatalf("rows = %+v", h.m.rows)
 	}
+	// Typing lists matches but selects none: the typed text is the value.
 	h.keys(typ("ksys"))
-	if h.m.rows[h.m.sel].value != "kube-system" || h.m.rows[h.m.sel].desc != "system" {
+	if h.m.sel != -1 || len(h.m.rows) != 1 || h.m.rows[0].value != "kube-system" {
+		t.Fatalf("sel %d, rows %+v", h.m.sel, h.m.rows)
+	}
+	if p := ansi.Strip(h.m.preview()); p != "k get pods -n ksys -o wide" {
+		t.Fatalf("preview = %q", p)
+	}
+	// Ctrl-N picks a match, Ctrl-P goes back to the typed text.
+	h.keys(key(tea.KeyCtrlN))
+	if h.m.selected() != "kube-system" || h.m.rows[h.m.sel].desc != "system" {
 		t.Fatalf("selected = %+v", h.m.rows[h.m.sel])
 	}
-	if !strings.Contains(h.m.View(), "kube-system") {
+	if !strings.Contains(h.m.View(), "-n kube-system") {
 		t.Fatal("view should preview the selection")
 	}
-	h.keys(key(tea.KeyEnter))
+	h.keys(key(tea.KeyCtrlP))
+	if h.m.sel != -1 || !strings.Contains(h.m.preview(), "ksys") {
+		t.Fatalf("ctrl+p: sel %d, preview %q", h.m.sel, h.m.preview())
+	}
+	h.keys(key(tea.KeyCtrlN), key(tea.KeyEnter))
 	if got := h.m.cmd.Render(); got != "k get pods -n kube-system -o wide" {
 		t.Fatalf("result = %q", got)
+	}
+}
+
+func TestTypedValueNotAutoSelected(t *testing.T) {
+	h := newHarness(t, "k get pods -n monitoring -o wide", nil)
+	h.keys(typ("ksys"), key(tea.KeyEnter))
+	if got := h.m.cmd.Render(); got != "k get pods -n ksys -o wide" {
+		t.Fatalf("result = %q", got)
+	}
+
+	// An exact match is selected.
+	h = newHarness(t, "k get pods -n monitoring -o wide", nil)
+	h.keys(typ("kube-system"))
+	if h.m.selected() != "kube-system" {
+		t.Fatalf("selected %q, rows %+v", h.m.selected(), h.m.rows)
+	}
+
+	// Candidates arriving later neither select a match nor drop a row the
+	// user browsed to.
+	h = newHarness(t, "k get pods -n monitoring -o wide", nil)
+	h.keys(typ("s"))
+	if h.m.sel != -1 {
+		t.Fatalf("sel = %d", h.m.sel)
+	}
+	h.m.Update(updateMsg{ID: h.m.reqID, Source: "cli", Result: complete.Result{
+		Candidates: []complete.Candidate{{Value: "s-early"}}}})
+	if h.m.sel != -1 {
+		t.Fatalf("sel after update = %d (%q)", h.m.sel, h.m.selected())
+	}
+	h.keys(key(tea.KeyCtrlN), key(tea.KeyCtrlN))
+	picked := h.m.selected()
+	// "s" is an exact match, but the user picked a row first.
+	h.m.Update(updateMsg{ID: h.m.reqID, Source: "cli", Result: complete.Result{
+		Candidates: []complete.Candidate{{Value: "ss-best"}, {Value: "s"}}}})
+	if got := h.m.selected(); got != picked {
+		t.Fatalf("selected %q after update, want %q", got, picked)
+	}
+
+	// On "+ flag", the best match is selected, since flag names are rarely
+	// typed in full.
+	h = newHarness(t, "k get pods -n monitoring", nil)
+	for !h.m.onAddSlot() {
+		h.keys(key(tea.KeyTab))
+	}
+	h.keys(typ("sel"))
+	if h.m.selected() != "--selector" {
+		t.Fatalf("flag rows = %+v, sel %d", h.m.rows, h.m.sel)
 	}
 }
 
@@ -364,14 +428,6 @@ func TestCycleFillsValuesFromCompletion(t *testing.T) {
 	}
 }
 
-// selected returns the value of the selected row, or "" if none is.
-func (m *Model) selected() string {
-	if m.sel < 0 || m.sel >= len(m.rows) {
-		return ""
-	}
-	return m.rows[m.sel].value
-}
-
 func TestCycleSelectsActiveValue(t *testing.T) {
 	h := newHarness(t, "k get pods -n monitoring", nil)
 	for _, want := range []string{"wide", "yaml"} {
@@ -463,7 +519,7 @@ func TestTransformKeepsPickedValue(t *testing.T) {
 	if s := h.m.cmd.Slots[h.m.focus]; s.Key != "namespace" {
 		t.Fatalf("initial focus = %s", s.Key)
 	}
-	h.keys(typ("ksys"), key(tea.KeyCtrlG))
+	h.keys(typ("ksys"), key(tea.KeyCtrlN), key(tea.KeyCtrlG))
 	if s := h.m.cmd.Slots[h.m.focus]; s.Key != "name" {
 		t.Fatalf("focused %s, want name", s.Key)
 	}
@@ -473,7 +529,7 @@ func TestTransformKeepsPickedValue(t *testing.T) {
 	}
 
 	h = newHarness(t, line, nil)
-	h.keys(typ("ksys"), key(tea.KeyCtrlO))
+	h.keys(typ("ksys"), key(tea.KeyCtrlN), key(tea.KeyCtrlO))
 	if got, want := h.m.cmd.Render(), "kubectl get pods control-plane-9nj4j -n kube-system -w -o yaml"; got != want {
 		t.Fatalf("ctrl+o: result %q, want %q", got, want)
 	}
@@ -555,10 +611,11 @@ func TestCycleSource(t *testing.T) {
 		t.Fatal("view should show the active source")
 	}
 
-	// A typed query survives switching source.
+	// A typed query survives switching source, still filtering the list
+	// without selecting a match.
 	h.keys(typ("mon"), key(tea.KeyCtrlS))
-	if h.m.query != "mon" || h.m.active != "cli" || h.m.selected() != "monitoring" {
-		t.Fatalf("query %q, active %q, selected %q", h.m.query, h.m.active, h.m.selected())
+	if h.m.query != "mon" || h.m.active != "cli" || h.m.sel != -1 || h.m.rowIndex("monitoring") < 0 {
+		t.Fatalf("query %q, active %q, sel %d, rows %s", h.m.query, h.m.active, h.m.sel, values())
 	}
 }
 
@@ -618,7 +675,7 @@ func TestDisabledSources(t *testing.T) {
 
 func TestRunCtrlE(t *testing.T) {
 	h := newHarness(t, "k get pods -n monitoring", nil)
-	h.keys(typ("ksys"), key(tea.KeyCtrlE))
+	h.keys(typ("ksys"), key(tea.KeyCtrlN), key(tea.KeyCtrlE))
 	if !h.m.quitting || h.m.cancelled || !h.m.run {
 		t.Fatalf("ctrl+e should accept and run: quitting %v, cancelled %v, run %v", h.m.quitting, h.m.cancelled, h.m.run)
 	}
@@ -710,6 +767,96 @@ func TestViewBox(t *testing.T) {
 		if sep < 0 || !strings.Contains(lines[sep+1], "slot") {
 			t.Fatalf("width %d: no separator above the legend:\n%s", width, h.m.View())
 		}
+	}
+}
+
+const (
+	longToken = "gAAAAABq6vPKacUlibP39ALxMk6C4NgvSLCWiaxCvZKtiihSyxbugGr8FID-zFmjtsXgYfJTgiK0ZzH7BRy4OIDawQjS5prpSP3cgoPiwwdUSuKsjsGgwjVl_Y5hPuoC9O7gFopErk_jVckNwc4d7dEexM996SaaJN4yhcmLTm9FbgwB-OJEEWTLcvrUGmYo1QATJK7C5vE9eOhG_V4h6Xbb8iWBJZ78KIHuSNCj6YWbtfPsOwanDc0uywY0gwUXJ2oyWitxbGxuiWCo5lsh-98fX0AnhoZRug"
+	longCurl  = `curl -H "X-Auth-Token: ` + longToken + `" https://localhost:7878/compute/v2.1/servers/detail  -k`
+)
+
+// cells lays out a view on a cell grid, the way a terminal draws it.
+func cells(view string, width int) *cellbuf.Buffer {
+	buf := cellbuf.NewBuffer(width, strings.Count(view, "\n")+1)
+	cellbuf.SetContent(buf, view)
+	return buf
+}
+
+// TestViewLongStyled checks that a focused value wrapped over several lines
+// stays reversed on each of them, and that the style doesn't leak into the
+// padding and border.
+func TestViewLongStyled(t *testing.T) {
+	for _, width := range []int{80, 40} {
+		h := newHarness(t, longCurl, nil)
+		r := lipgloss.NewRenderer(io.Discard)
+		r.SetColorProfile(termenv.ANSI256)
+		h.m.st = newStyles(r, nil)
+		h.m.width = width
+		view := h.m.View()
+		buf := cells(view, width)
+		var rev strings.Builder
+		for y := range buf.Height() {
+			for _, x := range []int{width - 2, width - 1} {
+				if c := buf.Cell(x, y); c != nil && c.Style.Attrs.Contains(cellbuf.ReverseAttr) {
+					t.Errorf("width %d: line %d: reverse leaks into column %d:\n%q", width, y, x, view)
+				}
+			}
+			for x := range width {
+				if c := buf.Cell(x, y); c != nil && c.Style.Attrs.Contains(cellbuf.ReverseAttr) {
+					rev.WriteRune(c.Rune)
+				}
+			}
+		}
+		if !strings.Contains(rev.String(), longToken) {
+			t.Errorf("width %d: focused value not reversed throughout: %q", width, rev.String())
+		}
+	}
+}
+
+// TestViewHeight checks that the editor fits the terminal height, keeping
+// the borders, the search line, the focused slot and the selected row.
+func TestViewHeight(t *testing.T) {
+	newH := func() *harness {
+		h := newHarness(t, longCurl, nil)
+		for i := range 30 {
+			h.m.merge(fmt.Sprintf("X-Cand-%02d: v", i), "", "spec", 0, i)
+		}
+		h.m.filter()
+		h.m.width = 80
+		return h
+	}
+	for _, height := range []int{40, 15, 10, 6} {
+		h := newH()
+		h.m.height = height
+		check := func(when, want string) {
+			view := h.m.View()
+			lines := strings.Split(view, "\n")
+			if len(lines) > height {
+				t.Errorf("height %d %s: %d lines:\n%s", height, when, len(lines), view)
+			}
+			if !strings.HasPrefix(lines[0], "╭") || !strings.HasPrefix(lines[len(lines)-1], "╰") {
+				t.Errorf("height %d %s: no border:\n%s", height, when, view)
+			}
+			if !strings.Contains(view, "header:") {
+				t.Errorf("height %d %s: no search line:\n%s", height, when, view)
+			}
+			if !strings.Contains(view, want) {
+				t.Errorf("height %d %s: %q not visible:\n%s", height, when, want, view)
+			}
+		}
+		// The end of the focused value, which is on the last line it wraps to.
+		check("initially", longToken[len(longToken)-20:])
+		for range 20 {
+			h.keys(key(tea.KeyDown))
+		}
+		check("after scrolling", "> "+h.m.rows[h.m.sel].value)
+	}
+
+	// An unknown height doesn't limit the view.
+	a, b := newH(), newH()
+	b.m.height = 1000
+	if a.m.View() != b.m.View() {
+		t.Errorf("unknown height changes the view:\n%s\n%s", a.m.View(), b.m.View())
 	}
 }
 
