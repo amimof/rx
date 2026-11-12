@@ -6,7 +6,10 @@
 #
 # Usage: zsh -f driver.zsh <dir> <path to zsh or bash> <step>...
 #
-# The shell is given by path since zsh may reset PATH at startup.
+# The shell is given by path since zsh may reset PATH at startup. Both
+# shells start without the system rc files (zsh -d, bash --rcfile), so the
+# tests depend only on the rc file they write: Debian's /etc/zsh/zshrc, for
+# one, runs compinit, which stops at a prompt on insecure fpath directories.
 #
 # Steps:
 #   key:<bytes>     type bytes (no newline is added)
@@ -35,7 +38,7 @@ finish() {
 }
 
 case ${sh:t} in
-  (zsh) zpty -b z $sh -i ;;
+  (zsh) zpty -b z $sh -d -i ;;
   (bash) zpty -b z $sh --noprofile --rcfile $dir/.bashrc -i ;;
   (*) print -u2 "bad shell: $sh"; exit 2 ;;
 esac
