@@ -47,7 +47,7 @@ func TestClassify(t *testing.T) {
 		key   string
 		value string
 	}{
-		{model.Positional, "verb", "get"},
+		{model.Positional, "subcommand", "get"},
 		{model.Positional, "resource", "pods"},
 		{model.Positional, "name", "my-pod"},
 		{model.Flag, "namespace", "prod"},
@@ -107,12 +107,12 @@ func TestTransforms(t *testing.T) {
 		},
 		{
 			"k get pods my-pod-123 -n production",
-			func(c *model.Command, s *spec.Spec) error { return Cycle(c, s, "verb", nil) },
+			func(c *model.Command, s *spec.Spec) error { return Cycle(c, s, "subcommand", nil) },
 			"k describe pods my-pod-123 -n production",
 		},
 		{
 			"k delete pods x",
-			func(c *model.Command, s *spec.Spec) error { return Cycle(c, s, "verb", nil) },
+			func(c *model.Command, s *spec.Spec) error { return Cycle(c, s, "subcommand", nil) },
 			"k get pods x",
 		},
 		{

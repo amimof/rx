@@ -65,6 +65,7 @@ func runDoctor(shellName string) error {
 	}
 	if err == nil {
 		check("complete", cfg.Complete.String(), nil)
+		check("rules", cfg.Rules, nil)
 	}
 
 	reg, err := loadRegistry()

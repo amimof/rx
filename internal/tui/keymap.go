@@ -21,6 +21,8 @@ const (
 	ActSource   = "source"
 	ActDrop     = "drop"
 	ActClear    = "clear"
+	// ActUndo reverts the last edit, along with what rules did after it.
+	ActUndo = "undo"
 )
 
 // Keymap maps editor actions to the keys that trigger them. Keys are named
@@ -42,6 +44,7 @@ func DefaultKeys() Keymap {
 		ActSource:   {"ctrl+s"},
 		ActDrop:     {"ctrl+d"},
 		ActClear:    {"ctrl+u", "ctrl+w"},
+		ActUndo:     {"ctrl+z"},
 	}
 }
 
@@ -115,8 +118,9 @@ func keyLabel(key string) string {
 }
 
 // helpItems returns the help line's entries for the editor's own keys,
-// e.g. "^e run".
-func (k Keymap) helpItems() []string {
+// e.g. "^e run". undo is shown only if there is something to undo or the
+// plugin has transforms or rules.
+func (k Keymap) helpItems(undo bool) []string {
 	var parts []string
 	add := func(desc string, actions ...string) {
 		var ls []string
@@ -139,6 +143,9 @@ func (k Keymap) helpItems() []string {
 	add("run", ActRun)
 	add("source", ActSource)
 	add("drop", ActDrop)
+	if undo {
+		add("undo", ActUndo)
+	}
 	add("cancel", ActBack)
 	return parts
 }

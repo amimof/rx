@@ -61,6 +61,9 @@ type Slot struct {
 	// rendering an unmodified slot, preserving quoting.
 	Raw   string
 	Dirty bool
+	// ID identifies the slot within its command while slots move, e.g. to
+	// revert a rule. 0 until assigned by AssignIDs or Add.
+	ID int
 }
 
 // Command is a parsed simple command broken into slots.
@@ -74,6 +77,28 @@ type Command struct {
 	// whether anything was modified since parsing.
 	Source  string
 	Changed bool
+
+	lastID int
+}
+
+// AssignIDs gives every slot without an ID a new one.
+func (c *Command) AssignIDs() {
+	for i := range c.Slots {
+		if c.Slots[i].ID == 0 {
+			c.lastID++
+			c.Slots[i].ID = c.lastID
+		}
+	}
+}
+
+// FindID returns the index of the slot with the given ID, or -1.
+func (c *Command) FindID(id int) int {
+	for i := range c.Slots {
+		if c.Slots[i].ID == id {
+			return i
+		}
+	}
+	return -1
 }
 
 // Find returns the index of the first slot with the given key, or -1.
@@ -111,26 +136,95 @@ func (c *Command) RemoveKey(key string) {
 	}
 }
 
-// Add appends a flag slot and returns its index.
+// Clone returns a copy of c that can be changed without affecting c.
+func (c *Command) Clone() *Command {
+	out := *c
+	out.Slots = append([]Slot(nil), c.Slots...)
+	return &out
+}
+
+// Add adds a slot and returns its index. Flags are appended, but before a
+// "--" separator, after which everything is an operand.
 func (c *Command) Add(s Slot) int {
 	s.Dirty = true
 	c.Changed = true
+	at := len(c.Slots)
 	if s.Kind != Positional {
-		c.Slots = append(c.Slots, s)
-		return len(c.Slots) - 1
-	}
-	// Keep positionals in order: insert after the last positional with a
-	// lower index, or before everything if there is none.
-	at := 0
-	for i, x := range c.Slots {
-		if x.Kind == Positional && x.Index < s.Index {
-			at = i + 1
+		if i := c.Find("--"); i >= 0 {
+			at = i
+		}
+	} else {
+		// Keep positionals in order: insert after the last positional with
+		// a lower index, or before everything if there is none.
+		at = 0
+		for i, x := range c.Slots {
+			if x.Kind == Positional && x.Index < s.Index {
+				at = i + 1
+			}
 		}
 	}
 	c.Slots = append(c.Slots, Slot{})
 	copy(c.Slots[at+1:], c.Slots[at:])
 	c.Slots[at] = s
+	c.AssignIDs()
 	return at
+}
+
+// Insert puts s at index at as it is, without marking it changed, and
+// returns at. A positional takes the position of the first positional at or
+// after at, and those move up one position; without one it keeps its
+// Index. Extract and Insert undo each other.
+func (c *Command) Insert(at int, s Slot) int {
+	if s.Kind == Positional {
+		shifted := false
+		for i := at; i < len(c.Slots); i++ {
+			if c.Slots[i].Kind != Positional {
+				continue
+			}
+			if !shifted {
+				s.Index, shifted = c.Slots[i].Index, true
+			}
+			c.Slots[i].Index++
+		}
+	}
+	c.Changed = true
+	c.Slots = append(c.Slots, Slot{})
+	copy(c.Slots[at+1:], c.Slots[at:])
+	c.Slots[at] = s
+	c.AssignIDs()
+	return at
+}
+
+// InsertPositional inserts positional s at its Index, before the
+// positionals at that position or later, which move up one position.
+func (c *Command) InsertPositional(s Slot) int {
+	at := 0
+	for i, x := range c.Slots {
+		if x.Kind != Positional {
+			continue
+		}
+		if x.Index >= s.Index {
+			return c.Insert(i, s)
+		}
+		at = i + 1
+	}
+	return c.Insert(at, s)
+}
+
+// Extract removes slot i and returns it. The positionals after a removed
+// positional move down one position, so `get pods NAME` without "pods" has
+// NAME at position 1.
+func (c *Command) Extract(i int) Slot {
+	s := c.Slots[i]
+	c.Remove(i)
+	if s.Kind == Positional {
+		for j := i; j < len(c.Slots); j++ {
+			if c.Slots[j].Kind == Positional {
+				c.Slots[j].Index--
+			}
+		}
+	}
+	return s
 }
 
 // Render returns the command as shell text. An unmodified command renders

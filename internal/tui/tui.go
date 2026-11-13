@@ -22,6 +22,7 @@ import (
 	"github.com/amimof/rx/internal/engine"
 	"github.com/amimof/rx/internal/history"
 	"github.com/amimof/rx/internal/model"
+	"github.com/amimof/rx/internal/rule"
 	"github.com/amimof/rx/internal/spec"
 	"github.com/amimof/rx/internal/transform"
 )
@@ -43,7 +44,24 @@ type Options struct {
 	// Theme styles the editor; roles it doesn't mention, or all of them
 	// if nil, use DefaultTheme.
 	Theme Theme
+	// Rules is when plugin rules run: RulesLive (or ""), RulesCommit or
+	// RulesOff.
+	Rules string
 }
+
+// When plugin rules run.
+const (
+	// RulesLive previews the rules on the value being typed or selected,
+	// and applies them when it is committed.
+	RulesLive = "live"
+	// RulesCommit runs the rules when a value is committed.
+	RulesCommit = "commit"
+	// RulesOff never runs them.
+	RulesOff = "off"
+)
+
+// RulesModes lists the values of Options.Rules.
+var RulesModes = []string{RulesLive, RulesCommit, RulesOff}
 
 // Outcome is the result of an editing session.
 type Outcome struct {
@@ -149,6 +167,13 @@ type Model struct {
 	// cycle is a cycle transform waiting for candidates to fill its values.
 	cycle *pendingCycle
 
+	// rules tracks the plugin's rules between edits.
+	rules *rule.State
+	// notice says what rules did after the last edit, until the next key.
+	notice string
+	// undo holds the states before each edit.
+	undo []snapshot
+
 	keys Keymap
 	act  map[string]string // key -> action
 
@@ -167,6 +192,12 @@ type pendingCycle struct {
 	added bool // the slot was added to fetch values for it
 }
 
+type snapshot struct {
+	cmd   *model.Command
+	rules *rule.State
+	focus int
+}
+
 func newModel(o Options, st styles) *Model {
 	m := &Model{o: o, st: st, cmd: o.Cmd, sp: o.Spec, width: 80, keys: o.Keys}
 	s := spinner.MiniDot
@@ -177,6 +208,8 @@ func newModel(o Options, st styles) *Model {
 	}
 	m.act = m.keys.actions()
 	m.addPlaceholders()
+	m.cmd.AssignIDs()
+	m.rules = rule.Init(m.cmd, m.sp)
 	return m
 }
 
@@ -561,6 +594,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.notice = ""
 	if m.sp != nil {
 		for _, t := range m.sp.Transforms {
 			if t.Binding() == k.String() {
@@ -570,18 +604,23 @@ func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.focusSlot(t.Target())
 					return m, nil
 				}
+				m.pushUndo()
 				err := transform.Apply(m.cmd, m.sp, t)
 				if errors.Is(err, transform.ErrNoValues) {
 					m.autoCycle(t.Target())
 					return m, nil
 				}
 				if err != nil {
+					m.undo = m.undo[:len(m.undo)-1]
 					m.errText = err.Error()
 					return m, nil
 				}
-				if t.Op == "cycle" {
+				switch {
+				case m.settle():
+					m.refocus()
+				case t.Op == "cycle":
 					m.afterCycle(t.Target())
-				} else {
+				default:
 					m.refocus()
 				}
 				return m, nil
@@ -612,7 +651,8 @@ func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case ActNextSlot:
 		if m.commit() {
-			// Added a flag that takes a value: stay on it.
+			// Added a flag that takes a value, or a rule added a slot to
+			// fill: stay on it.
 			m.refocus()
 			return m, nil
 		}
@@ -635,16 +675,131 @@ func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case ActDrop:
 		// Delete the focused slot.
 		if !m.onAddSlot() {
+			m.pushUndo()
 			m.cmd.Remove(m.focus)
+			m.settle()
 			m.refocus()
 		}
 	case ActClear:
 		m.query, m.sel = "", -1
 		m.filter()
+	case ActUndo:
+		m.undoLast()
 	default:
 		m.typeKey(k)
 	}
 	return m, nil
+}
+
+// settle runs the plugin's rules after an edit, keeps the focus on the same
+// slot, and says what the rules did. It reports whether a rule added a slot
+// to fill, which it focuses.
+func (m *Model) settle() bool {
+	if !m.hasRules() {
+		return false
+	}
+	id := 0
+	if !m.onAddSlot() {
+		id = m.cmd.Slots[m.focus].ID
+	}
+	res := rule.Settle(m.cmd, m.sp, m.rules)
+	if len(res.Log) > 0 {
+		if m.notice != "" {
+			m.notice += "; "
+		}
+		m.notice += strings.Join(res.Log, "; ")
+	}
+	if i := m.cmd.FindID(res.Focus); res.Focus != 0 && i >= 0 {
+		m.focus = i
+		return true
+	}
+	switch i := m.cmd.FindID(id); {
+	case id == 0:
+		m.focus = len(m.cmd.Slots)
+	case i >= 0:
+		m.focus = i
+	default:
+		m.focus = min(m.focus, len(m.cmd.Slots))
+	}
+	return false
+}
+
+// hasRules reports whether the plugin has rules and they are turned on.
+func (m *Model) hasRules() bool {
+	return m.o.Rules != RulesOff && m.sp != nil && len(m.sp.Rules) > 0
+}
+
+// pendingEdit is the command as it will be once the focused slot's pending
+// value is committed and the rules have run on it.
+type pendingEdit struct {
+	cmd *model.Command
+	// focus is the focused slot's index in cmd, -1 if a rule removed it.
+	focus int
+	// flag is set when the pending value is a flag added on "+ flag".
+	flag   bool
+	notice string
+}
+
+// pending returns the pending edit in live mode, or nil if the focused
+// slot has nothing new to commit or rules don't run live. On "+ flag",
+// only a value that names one of the plugin's flags is pending, so a
+// partly typed name doesn't fire rules. The command and rule state are
+// copies; committing produces the same result.
+func (m *Model) pending() *pendingEdit {
+	if m.o.Rules != "" && m.o.Rules != RulesLive || !m.hasRules() {
+		return nil
+	}
+	v := m.value()
+	if v == "" {
+		return nil
+	}
+	cmd, st := m.cmd.Clone(), m.rules.Clone()
+	p := &pendingEdit{cmd: cmd}
+	if m.onAddSlot() {
+		// The best match is selected as the user types, so the typed text
+		// must name the flag itself, e.g. "--json" or "-d".
+		f := m.sp.Flag(v)
+		if !strings.HasPrefix(v, "-") || f == nil || m.query != "" && m.sp.Flag(m.query) != f {
+			return nil
+		}
+		p.focus, p.flag = transform.AddFlag(cmd, m.sp, v, m.flagTakesValue(v)), true
+	} else {
+		if cmd.Slots[m.focus].Value == v {
+			return nil
+		}
+		p.focus = transform.SetAt(cmd, m.sp, m.focus, v)
+	}
+	id := cmd.Slots[p.focus].ID
+	res := rule.Settle(cmd, m.sp, st)
+	p.focus = cmd.FindID(id)
+	p.notice = strings.Join(res.Log, "; ")
+	return p
+}
+
+// ruleNotice is what the rules did: for the pending edit in live mode,
+// else after the last edit.
+func (m *Model) ruleNotice() string {
+	if p := m.pending(); p != nil && p.notice != "" {
+		return p.notice
+	}
+	return m.notice
+}
+
+func (m *Model) pushUndo() {
+	m.undo = append(m.undo, snapshot{cmd: m.cmd.Clone(), rules: m.rules.Clone(), focus: m.focus})
+}
+
+// undoLast restores the state before the last edit, along with what the
+// rules did after it.
+func (m *Model) undoLast() {
+	if len(m.undo) == 0 {
+		m.errText = "nothing to undo"
+		return
+	}
+	s := m.undo[len(m.undo)-1]
+	m.undo = m.undo[:len(m.undo)-1]
+	m.cmd, m.rules, m.focus = s.cmd, s.rules, s.focus
+	m.refocus()
 }
 
 // typeKey edits the search with keys that aren't bound to an action.
@@ -734,6 +889,10 @@ func (m *Model) finishCycle() {
 		m.errText = err.Error()
 		return
 	}
+	if m.settle() {
+		m.refocus()
+		return
+	}
 	m.afterCycle(c.key)
 }
 
@@ -764,19 +923,25 @@ func (m *Model) selectPin() {
 }
 
 // commit applies the selected row, or else the typed query, to the focused
-// slot. It reports whether a flag that takes a value was added and focused.
+// slot, then runs the rules. It reports whether the slot to fill next was
+// focused: a flag that takes a value was added, or a rule added a slot.
 func (m *Model) commit() bool {
 	v := m.value()
 	if v == "" {
 		return false
 	}
 	if m.onAddSlot() {
+		m.pushUndo()
 		takes := m.flagTakesValue(v)
 		m.focus = transform.AddFlag(m.cmd, m.sp, v, takes)
-		return takes
+		return m.settle() || takes
+	}
+	same := m.cmd.Slots[m.focus].Value == v
+	if !same {
+		m.pushUndo()
 	}
 	m.focus = transform.SetAt(m.cmd, m.sp, m.focus, v)
-	return false
+	return !same && m.settle()
 }
 
 func (m *Model) flagTakesValue(name string) bool {
@@ -837,6 +1002,9 @@ func (m *Model) View() string {
 	}
 	if m.message != "" {
 		status = append(status, m.st.dim.Render("  "+firstLine(m.message)))
+	}
+	if n := m.ruleNotice(); n != "" {
+		status = append(status, m.st.dim.Render("  rule "+n))
 	}
 	if m.errText != "" {
 		status = append(status, m.st.err.Render("  "+firstLine(m.errText)))
@@ -971,14 +1139,26 @@ func (m *Model) preview() string {
 }
 
 // previewFocus returns the preview and the byte offset in it where the
-// focused slot ends.
+// focused slot ends. In live mode it shows the pending edit with the rules
+// applied.
 func (m *Model) previewFocus() (string, int) {
-	parts := []string{m.st.head.Render(m.cmd.Head.Raw)}
+	cmd, focus := m.cmd, m.focus
+	p := m.pending()
+	if p != nil {
+		cmd, focus = p.cmd, p.focus
+	}
+	parts := []string{m.st.head.Render(cmd.Head.Raw)}
 	focusPart := 0
-	for i, s := range m.cmd.Slots {
-		focused := i == m.focus
-		if v := m.value(); focused && v != "" {
+	for i, s := range cmd.Slots {
+		focused := i == focus
+		if v := m.value(); focused && v != "" && p == nil {
 			s.Value, s.Dirty = v, true
+		}
+		if focused && p != nil && p.flag {
+			// The flag being added, as typed.
+			parts = append(parts, m.st.flag.Reverse(true).Render(m.value()))
+			focusPart = len(parts) - 1
+			continue
 		}
 		name, sep, val := slotParts(s)
 		if name+sep+val == "" {
@@ -993,7 +1173,7 @@ func (m *Model) previewFocus() (string, int) {
 			focusPart = len(parts) - 1
 		}
 	}
-	if m.onAddSlot() {
+	if m.onAddSlot() && (p == nil || !p.flag) {
 		v := "+flag"
 		if mv := m.value(); mv != "" {
 			v = mv
@@ -1058,7 +1238,8 @@ func slotParts(s model.Slot) (name, sep, value string) {
 // helpGroups returns the legend items: the editor's keys, then the
 // plugin's shortcuts.
 func (m *Model) helpGroups() [][]string {
-	groups := [][]string{m.keys.helpItems()}
+	undo := len(m.undo) > 0 || (m.sp != nil && len(m.sp.Transforms)+len(m.sp.Rules) > 0)
+	groups := [][]string{m.keys.helpItems(undo)}
 	if m.sp != nil {
 		var ts []string
 		for _, t := range m.sp.Transforms {

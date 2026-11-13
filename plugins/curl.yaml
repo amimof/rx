@@ -1,7 +1,9 @@
 # Values come from zsh's curl completion. This file declares which flags
 # take a value, so `curl -s URL` keeps the URL as a positional, and adds a
 # method cycle. Without -X curl uses GET (or POST with -d), so the cycle
-# steps through the other methods and back to no -X.
+# steps through the other methods and back to no -X. Cycling to a method
+# that sends a body adds -d '{}', and cycling on to one that doesn't removes
+# it again.
 name: curl
 match:
   command: curl
@@ -28,3 +30,13 @@ positionals:
   - { index: 0, name: url }
 transforms:
   - { key: ctrl+x, op: cycle, flag: request, values: [POST, PUT, PATCH, DELETE], desc: "cycle method" }
+rules:
+  - name: post-adds-body
+    desc: methods that send a body get an empty JSON one
+    when:
+      - flag: { name: request, in: [POST, PUT, PATCH] }
+      - not: { flag: { name: data-raw, exists: true } }
+      - not: { flag: { name: json, exists: true } }
+      - not: { flag: { name: form, exists: true } }
+    then:
+      add: { flag: data, value: "{}", unless_present: true }

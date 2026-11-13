@@ -167,6 +167,10 @@ type Spec struct {
 	Positionals []PosSpec           `yaml:"positionals"`
 	Providers   map[string]Provider `yaml:"providers"`
 	Transforms  []Transform         `yaml:"transforms"`
+	// Values lists alternative spellings of slot values that rule
+	// conditions treat as equal.
+	Values ValueAliases `yaml:"values"`
+	Rules  []Rule       `yaml:"rules"`
 	// Focus lists the slots the editor starts on, in order of preference.
 	// The first one present in the command wins.
 	Focus FocusList `yaml:"focus"`
@@ -430,6 +434,8 @@ func (s *Spec) Validate() []error {
 			add("transform %q: unknown slot %q", t.Key, t.Slot)
 		}
 	}
+	s.validateValues(add)
+	s.validateRules(add)
 	return errs
 }
 

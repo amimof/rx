@@ -108,6 +108,24 @@ func TestPrompt(t *testing.T) {
 	}
 }
 
+func TestRules(t *testing.T) {
+	dir := home(t)
+	c, err := Load("")
+	if err != nil || c.Rules != tui.RulesLive {
+		t.Fatalf("default rules %q, err %v", c.Rules, err)
+	}
+	for _, mode := range tui.RulesModes {
+		write(t, filepath.Join(dir, "rx", "config.yaml"), "rules: "+mode+"\n")
+		if c, err = Load(""); err != nil || c.Rules != mode {
+			t.Fatalf("%s: rules %q, err %v", mode, c.Rules, err)
+		}
+	}
+	t.Setenv("RX_RULES", "commit")
+	if c, err = Load(""); err != nil || c.Rules != tui.RulesCommit {
+		t.Fatalf("env rules %q, err %v", c.Rules, err)
+	}
+}
+
 func TestComplete(t *testing.T) {
 	dir := home(t)
 	c, err := Load("")
@@ -191,6 +209,7 @@ func TestInvalid(t *testing.T) {
 		{"complete: [auto, shell]\n", `complete: "auto" can't be combined`},
 		{"complete: []\n", "complete: empty list of sources"},
 		{"complete: { cobra: true }\n", "complete: want a source or a list"},
+		{"rules: always\n", `rules: want one of live, commit, off, got "always"`},
 	} {
 		dir := home(t)
 		write(t, filepath.Join(dir, "rx", "config.yaml"), tt.yaml)
