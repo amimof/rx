@@ -80,6 +80,7 @@ rx-doctor
 | `Ctrl+E` | Put the command back in the prompt and run it |
 | `Ctrl+S` | Cycle the suggestion source: all, then each [enabled source](#completion-sources) the slot has |
 | `Ctrl+D` | Remove the current slot |
+| `Ctrl+Z` | Undo the last edit, along with what [rules](#rules) did after it |
 | `Ctrl+U` / `Ctrl+W` | Clear the search |
 | `Esc` | Clear the search, press again to cancel |
 | `Ctrl+C` | Cancel |
@@ -96,6 +97,7 @@ key: "^X^X"                # key that opens rx, in caret notation
 log: ~/.cache/rx/rx.log    # widget log file
 prompt: "❯"                # symbol before the command in the editor; "" for none
 complete: auto             # completion sources, or a list of them; plugins may replace it
+rules: live                # when plugin rules run: live, commit or off
 keys:                      # editor keys; a list replaces that action's defaults
   accept:    [enter]
   run:       [ctrl+e]       # accept, then run the command
@@ -108,6 +110,7 @@ keys:                      # editor keys; a list replaces that action's defaults
   source:    [ctrl+s]
   drop:      [ctrl+d]
   clear:     [ctrl+u, ctrl+w]
+  undo:      [ctrl+z]
 theme:                     # editor colors; a role replaces that role's default
   flag:   "#5f87ff"        # a string sets only the text color
   value:  { fg: 2, bold: true }
@@ -119,7 +122,7 @@ Keys are named like `ctrl+e`, `alt+y`, `shift+tab`, `enter`, `esc`, `up`. An emp
 
 Theme roles are `head` (the command word), `flag`, `value` (a flag's value), `arg` (positional arguments), `sel` (the selected candidate), `spinner` (shown while candidates load), `dim` (descriptions, status and the help line), `err`, `border`, `prompt` and `focus` (the `=` between a focused flag and its value). A role takes `fg` and `bg` colors, either an ANSI color number `0`–`255` or hex `#rgb`/`#rrggbb`, and `bold`, `italic`, `faint`, `underline` and `reverse`. Roles you don't list keep their default look. The focused slot is always shown reversed. Hex colors are approximated on terminals with fewer colors, and `NO_COLOR` turns colors off.
 
-Environment variables override the file: `RX_KEY`, `RX_LOG`, `RX_PROMPT`, and `RX_COMPLETE` and `RX_KEYS_<ACTION>` with a comma-separated list, e.g. `RX_COMPLETE=history,shell` or `RX_KEYS_NEXT_SLOT=tab,ctrl+f`. The theme can only be set in the file.
+Environment variables override the file: `RX_KEY`, `RX_LOG`, `RX_PROMPT`, `RX_RULES`, and `RX_COMPLETE` and `RX_KEYS_<ACTION>` with a comma-separated list, e.g. `RX_COMPLETE=history,shell` or `RX_KEYS_NEXT_SLOT=tab,ctrl+f`. The theme can only be set in the file.
 
 `key` and `log` are baked into the widget by `rx init`, so changes take effect in new shells. To use a different key than Ctrl-X Ctrl-X without the config file, set `RX_KEY` before the `eval` line, or call `rx-bind` after it. The key is written in caret notation (`^X^X`, `^[r` for Alt+r), which every shell accepts. bash also takes readline syntax (`\C-x\C-x`), and fish its own escapes (`\cx\cx`) and, from fish 4, key names (`ctrl-x,ctrl-x`). The default replaces the `exchange-point-and-mark` binding of zsh and bash in emacs mode; pick another key if you use it.
 
@@ -134,7 +137,7 @@ In fish, rx is bound in the `default` and `insert` modes, which cover emacs and 
 
 ## Plugins
 
-Plugins are optional YAML files that describe a command: which flags take values, which flags cancel each other out, and one-key shortcuts. rx ships with plugins for [kubectl](plugins/kubectl.yaml), [git](plugins/git.yaml) and [curl](plugins/curl.yaml) (`Ctrl+X` cycles the HTTP method). You can add your own in `~/.config/rx/plugins/`.
+Plugins are optional YAML files that describe a command: which flags take values, which flags cancel each other out, one-key shortcuts, and [rules](#rules) that adjust the command as you edit it. rx ships with plugins for [kubectl](plugins/kubectl.yaml), [git](plugins/git.yaml) and [curl](plugins/curl.yaml) (`Ctrl+X` cycles the HTTP method). You can add your own in `~/.config/rx/plugins/`.
 
 ```yaml
 name: kubectl
@@ -148,7 +151,7 @@ transforms:
   - { key: ctrl+o, op: cycle, flag: output, desc: "cycle output" }
 ```
 
-A transform `key` is `ctrl+<letter>`, `alt+<char>`, or a bare character, which means `alt+<char>`. Plugin shortcuts take precedence over the editor's own keys, so avoid `ctrl+` keys you use in the editor (by default `ctrl+c`, `d`, `e`, `n`, `p`, `s`, `u` and `w`). `ctrl+i` and `ctrl+m` can't be used, since terminals send them as Tab and Enter.
+A transform `key` is `ctrl+<letter>`, `alt+<char>`, or a bare character, which means `alt+<char>`. Plugin shortcuts take precedence over the editor's own keys, so avoid `ctrl+` keys you use in the editor (by default `ctrl+c`, `d`, `e`, `n`, `p`, `s`, `u`, `w` and `z`). `ctrl+i` and `ctrl+m` can't be used, since terminals send them as Tab and Enter.
 
 A `cycle` transform steps through the transform's `values`, or else the flag's or positional's `values`. If neither has any, rx cycles through the candidates the editor would list for that slot: history first, then completions. Cycling focuses the slot and selects its new value in the list.
 
@@ -160,7 +163,7 @@ Use `focus:` to choose which slot the editor starts on. It takes a positional na
 name: flux
 match: { command: flux }
 positionals:
-  - { index: 0, name: verb }
+  - { index: 0, name: subcommand }
   - { index: 1, name: kind }
 focus: kind          # `flux get kustomization` starts on "kustomization"
 ```
@@ -172,6 +175,52 @@ focus: [-name, -type] # `find . -name "*.txt" -type d` starts on "*.txt"
 ```
 
 Check your plugin with `rx plugins lint my-plugin.yaml`.
+
+### Rules
+
+A rule is a conditional transformation: when an edit makes its conditions hold, it changes other slots to match. The kubectl plugin's rule turns `kubectl get pods my-pod -n default` into `kubectl logs my-pod -n default` when you change `get` to `logs`, because `logs` takes the pod name without the resource. The curl plugin's rule adds `-d '{}'` when the method becomes POST, PUT or PATCH. The editor shows what a rule did below the list.
+
+The `rules` setting in the [config file](#configuration) decides when rules run:
+
+| Value | Rules run |
+|---|---|
+| `live` (default) | as you type or move through the list. The preview and the rule notice show the result right away, e.g. typing `logs` shows `kubectl logs my-pod -n default`, and Backspace brings `pods` back. Nothing changes until Tab, Enter or Ctrl+E commits the value, and then the command is exactly what the preview showed. On `+ flag`, only a fully typed flag name (`--json`, `-d`) or one picked with ↑/↓ triggers rules. |
+| `commit` | when a value is committed with Tab, Shift+Tab, Enter or Ctrl+E |
+| `off` | never |
+
+Plugin shortcuts and `Ctrl+D` change the command directly, so with `live` or `commit` they run rules at once.
+
+Rules remember the command from before they changed it. When their conditions stop holding, they put it back: change `logs` back to `get` and `pods` returns in front of the pod name, written as you typed it. Changes you made yourself are kept. If you rename the pod, edit the body or add the resource back yourself, the rule leaves your version alone, and a slot you delete isn't added again. Rules that already hold when rx opens don't fire, so opening rx never changes the command. `Ctrl+Z` undoes an edit together with what the rules did after it.
+
+```yaml
+values:                    # spellings conditions treat as the same value
+  resource:
+    pod: [po, pods]
+rules:
+  - name: logs-removes-resource
+    when:                  # one condition, or a list that must all hold
+      - argument: { name: subcommand, equals: logs }
+      - argument: { name: resource, equals: pod }   # also matches po and pods
+      - argument: { name: name, exists: true }
+    then:                  # one action, or a list
+      - remove: { argument: resource }
+      - remove: { flag: output }
+  - name: post-adds-body   # in curl's plugin
+    when:
+      flag: { name: request, in: [POST, PUT, PATCH] }
+    then:
+      add: { flag: data, value: "{}", unless_present: true }
+```
+
+- **Conditions** test one slot: a positional by its name (`argument:`) or a flag by its long name (`flag:`), with exactly one check: `exists: true|false`, `equals`, `in` (any of a list) or `matches` (a regular expression). `not:` negates another condition. A flag given more than once matches if any of its values does.
+- **Actions** change one slot each:
+  - `add` adds a flag or argument. A flag is added again if it's already there, since flags like `-H` repeat; an argument that's already there gets the value. With `unless_present: true`, a slot that has a value is left alone. An argument added without a value becomes an empty slot that the editor focuses.
+  - `remove` removes a flag or argument. The arguments after a removed one move up a position, so the pod name takes the resource's place.
+  - `set` sets a value, adding the slot if it's missing.
+- **Values** are [Go templates](https://pkg.go.dev/text/template) over the command's slots by name, as in providers (`{{.name}}`, `{{default "default" .namespace}}`).
+- A rule is judged without its own changes, so removing the resource it checked doesn't undo it. Rules that keep undoing each other stop after 10 rounds.
+
+Positionals are not yet scoped to subcommands. `kubectl logs my-pod` as typed has `my-pod` in the `resource` slot, which is why the rule needs a name. `rx rules -- 'k get pods my-pod'` prints each rule, whether it holds and the command it would produce.
 
 ### Completion sources
 

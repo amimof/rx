@@ -127,32 +127,55 @@ func (c *Client) readUntilEnd(fn func(kind string, fields []string)) error {
 	}
 }
 
+// response is one line of a response.
+type response struct {
+	kind   string
+	fields []string
+}
+
 // do runs one request/response exchange. A failed exchange poisons the
-// client since the stream position is unknown afterwards.
+// client since the stream position is unknown afterwards. fn is called on
+// the caller's goroutine, and never after do returns.
 func (c *Client) do(ctx context.Context, fn func(kind string, fields []string), req ...string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.err != nil {
 		return c.err
 	}
+	// The reader sends every line before done, so all of them reach fn
+	// before do returns.
+	lines := make(chan response)
 	done := make(chan error, 1)
 	go func() {
 		if err := c.send(req...); err != nil {
 			done <- err
 			return
 		}
-		done <- c.readUntilEnd(fn)
+		done <- c.readUntilEnd(func(kind string, fields []string) { lines <- response{kind, fields} })
 	}()
-	select {
-	case err := <-done:
-		c.err = err
-		return err
-	case <-ctx.Done():
-		// The shell is still busy; wait for it so the stream stays in sync,
-		// but report the timeout to the caller.
-		go func() { <-done }() //nolint:errcheck // only drained, the error is reported below
-		c.err = fmt.Errorf("%s completion timed out; backend disabled for this session", c.shell)
-		return ctx.Err()
+	for {
+		select {
+		case l := <-lines:
+			fn(l.kind, l.fields)
+		case err := <-done:
+			c.err = err
+			return err
+		case <-ctx.Done():
+			// The shell is still busy; read the rest of its response so the
+			// stream stays in sync, dropping the lines, but report the
+			// timeout to the caller.
+			go func() {
+				for {
+					select {
+					case <-lines:
+					case <-done: //nolint:errcheck // the timeout was already reported
+						return
+					}
+				}
+			}()
+			c.err = fmt.Errorf("%s completion timed out; backend disabled for this session", c.shell)
+			return ctx.Err()
+		}
 	}
 }
 

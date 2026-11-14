@@ -97,7 +97,7 @@ func runEdit(shellName string, cursor int, buf string) error {
 	eng.Complete = cfg.Complete
 	out, err := tui.Run(tui.Options{
 		Cmd: cmd, Spec: sp, History: e.hist, Engine: eng, Infer: e.hist, TTY: tty,
-		Keys: cfg.Keys, Prompt: cfg.Prompt, Theme: cfg.Theme,
+		Keys: cfg.Keys, Prompt: cfg.Prompt, Theme: cfg.Theme, Rules: cfg.Rules,
 	})
 	if err != nil {
 		return fail(fmt.Errorf("editor: %w", err))

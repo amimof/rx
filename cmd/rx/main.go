@@ -47,7 +47,7 @@ variables override them.`,
 		SilenceErrors: true,
 	}
 	root.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default "+config.Path()+")")
-	root.AddCommand(newInitCmd(), newEditCmd(), newIndexCmd(), newCompleteCmd(), newPluginsCmd(), newDoctorCmd())
+	root.AddCommand(newInitCmd(), newEditCmd(), newIndexCmd(), newCompleteCmd(), newRulesCmd(), newPluginsCmd(), newDoctorCmd())
 	return root
 }
 

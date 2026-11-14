@@ -44,7 +44,7 @@ func TestSynthesize(t *testing.T) {
 			"k get -n prod ",
 		},
 		{
-			"k get pods --namespace='a b'", "verb",
+			"k get pods --namespace='a b'", "subcommand",
 			[]string{"kubectl", "--namespace=a b", ""},
 			"k --namespace='a b' ",
 		},

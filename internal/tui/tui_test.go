@@ -115,7 +115,7 @@ func TestInitialFocus(t *testing.T) {
 	const flux = `
 match: { command: flux }
 positionals:
-  - { index: 0, name: verb }
+  - { index: 0, name: subcommand }
   - { index: 1, name: kind }
   - { index: 2, name: name }
 focus: kind
@@ -136,7 +136,7 @@ focus: [selector, --namespace]
 	const kubectlResource = `
 match: { command: kubectl, aliases: [k] }
 positionals:
-  - { index: 0, name: verb }
+  - { index: 0, name: subcommand }
   - { index: 1, name: resource }
 focus: resource
 `
@@ -384,7 +384,7 @@ cli: cobra
 flags:
   - { name: namespace, short: n, takes: value }
 positionals:
-  - { index: 0, name: verb }
+  - { index: 0, name: subcommand }
   - { index: 1, name: resource }
   - { index: 2, name: name }
 transforms:

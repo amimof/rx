@@ -20,12 +20,29 @@ flags:
   - { name: watch, short: w, takes: none }
   - { name: tail, takes: value }
 positionals:
-  - { index: 0, name: verb, values: [get, describe, logs, edit, delete] }
+  - { index: 0, name: subcommand, values: [get, describe, logs, edit, delete] }
   - { index: 1, name: resource }
   - { index: 2, name: name }
 transforms:
   - { key: ctrl+a, op: toggle, flag: all-namespaces, desc: "all namespaces" }
   - { key: ctrl+o, op: cycle, flag: output, desc: "cycle output" }
-  - { key: ctrl+v, op: cycle, slot: verb, desc: "cycle verb" }
+  - { key: ctrl+v, op: cycle, slot: subcommand, desc: "cycle subcommand" }
   - { key: ctrl+t, op: toggle, flag: watch, desc: "watch" }
   - { key: ctrl+g, op: focus, slot: name, desc: "jump to name" }
+values:
+  resource:
+    pod: [po, pods]
+    deployment: [deploy, deployments]
+# Positionals are not yet scoped to subcommands. In `kubectl logs NAME` the
+# pod name is classified as the resource, so the rule needs a name to remove
+# the resource before it.
+rules:
+  - name: logs-removes-resource
+    desc: logs takes a pod name without the resource, and no --output
+    when:
+      - argument: { name: subcommand, equals: logs }
+      - argument: { name: resource, equals: pod }
+      - argument: { name: name, exists: true }
+    then:
+      - remove: { argument: resource }
+      - remove: { flag: output }

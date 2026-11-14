@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -32,6 +33,9 @@ type Config struct {
 	// Complete lists the completion sources enabled by default
 	// (RX_COMPLETE). Plugins may replace it; nil enables all of them.
 	Complete spec.Sources
+	// Rules is when plugin rules run (RX_RULES): tui.RulesLive,
+	// tui.RulesCommit or tui.RulesOff.
+	Rules string
 	// Keys binds the editor's actions. Actions the file doesn't mention
 	// keep their defaults.
 	Keys tui.Keymap
@@ -71,7 +75,7 @@ func Load(file string) (*Config, error) {
 	v.SetConfigFile(file)
 	v.SetConfigType("yaml")
 	defaults := tui.DefaultKeys()
-	settings := []string{"key", "log", "prompt", "complete"}
+	settings := []string{"key", "log", "prompt", "complete", "rules"}
 	for a := range defaults {
 		settings = append(settings, "keys."+a)
 	}
@@ -79,7 +83,7 @@ func Load(file string) (*Config, error) {
 		_ = v.BindEnv(s, envName(s))
 	}
 
-	c := &Config{Key: DefaultKey, Prompt: tui.DefaultPrompt, Keys: defaults, Theme: tui.DefaultTheme()}
+	c := &Config{Key: DefaultKey, Prompt: tui.DefaultPrompt, Rules: tui.RulesLive, Keys: defaults, Theme: tui.DefaultTheme()}
 	if err := v.ReadInConfig(); err == nil {
 		c.File = file
 	} else if explicit || !errors.Is(err, fs.ErrNotExist) {
@@ -106,6 +110,12 @@ func Load(file string) (*Config, error) {
 			return nil, fmt.Errorf("config %s: complete: %w", file, err)
 		}
 		c.Complete = s
+	}
+	if v.IsSet("rules") {
+		c.Rules = v.GetString("rules")
+		if !slices.Contains(tui.RulesModes, c.Rules) {
+			return nil, fmt.Errorf("config %s: rules: want one of %s, got %q", file, strings.Join(tui.RulesModes, ", "), c.Rules)
+		}
 	}
 	for a := range defaults {
 		if k := "keys." + a; v.IsSet(k) {
@@ -205,7 +215,7 @@ func checkKnown(v *viper.Viper, actions tui.Keymap) error {
 	sort.Strings(keys)
 	for _, k := range keys {
 		// The complete and theme sections are checked as they are loaded.
-		if k == "key" || k == "log" || k == "prompt" || k == "keys" ||
+		if k == "key" || k == "log" || k == "prompt" || k == "rules" || k == "keys" ||
 			k == "complete" || strings.HasPrefix(k, "complete.") || k == "theme" || strings.HasPrefix(k, "theme.") {
 			continue
 		}
