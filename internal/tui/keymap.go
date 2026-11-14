@@ -23,6 +23,9 @@ const (
 	ActClear    = "clear"
 	// ActUndo reverts the last edit, along with what rules did after it.
 	ActUndo = "undo"
+	// ActLink links the focused slot to the other slots with the same
+	// value, so typing changes them all.
+	ActLink = "link"
 )
 
 // Keymap maps editor actions to the keys that trigger them. Keys are named
@@ -45,6 +48,7 @@ func DefaultKeys() Keymap {
 		ActDrop:     {"ctrl+d"},
 		ActClear:    {"ctrl+u", "ctrl+w"},
 		ActUndo:     {"ctrl+z"},
+		ActLink:     {"ctrl+q"},
 	}
 }
 
@@ -143,6 +147,7 @@ func (k Keymap) helpItems(undo bool) []string {
 	add("run", ActRun)
 	add("source", ActSource)
 	add("drop", ActDrop)
+	add("link", ActLink)
 	if undo {
 		add("undo", ActUndo)
 	}

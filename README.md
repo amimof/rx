@@ -111,6 +111,7 @@ keys:                      # editor keys; a list replaces that action's defaults
   drop:      [ctrl+d]
   clear:     [ctrl+u, ctrl+w]
   undo:      [ctrl+z]
+  link:      [ctrl+q]       # edit every slot with the focused slot's value
 theme:                     # editor colors; a role replaces that role's default
   flag:   "#5f87ff"        # a string sets only the text color
   value:  { fg: 2, bold: true }
@@ -120,7 +121,9 @@ theme:                     # editor colors; a role replaces that role's default
 
 Keys are named like `ctrl+e`, `alt+y`, `shift+tab`, `enter`, `esc`, `up`. An empty list (`drop: []`) unbinds an action. Single characters and space can't be bound, since they type into the search. Run `rx doctor` to check the file.
 
-Theme roles are `head` (the command word), `flag`, `value` (a flag's value), `arg` (positional arguments), `sel` (the selected candidate), `spinner` (shown while candidates load), `dim` (descriptions, status and the help line), `err`, `border`, `prompt` and `focus` (the `=` between a focused flag and its value). A role takes `fg` and `bg` colors, either an ANSI color number `0`–`255` or hex `#rgb`/`#rrggbb`, and `bold`, `italic`, `faint`, `underline` and `reverse`. Roles you don't list keep their default look. The focused slot is always shown reversed. Hex colors are approximated on terminals with fewer colors, and `NO_COLOR` turns colors off.
+`link` edits repeated values together. In `git tag -a v0.1.0 -m v0.1.0`, Ctrl-Q on either `v0.1.0` links it to the other one, which is then underlined. What you type or pick shows up in both, and Tab, Enter or Ctrl-E writes it to both as one edit. ↑/↓, Ctrl-U and Ctrl-S keep the link; any other key, or Ctrl-Q again, ends it without changing the other slots.
+
+Theme roles are `head` (the command word), `flag`, `value` (a flag's value), `arg` (positional arguments), `sel` (the selected candidate), `spinner` (shown while candidates load), `dim` (descriptions, status and the help line), `err`, `border`, `prompt`, `focus` (the `=` between a focused flag and its value) and `link` (slots linked to the focused one). A role takes `fg` and `bg` colors, either an ANSI color number `0`–`255` or hex `#rgb`/`#rrggbb`, and `bold`, `italic`, `faint`, `underline` and `reverse`. Roles you don't list keep their default look. The focused slot is always shown reversed. Hex colors are approximated on terminals with fewer colors, and `NO_COLOR` turns colors off.
 
 Environment variables override the file: `RX_KEY`, `RX_LOG`, `RX_PROMPT`, `RX_RULES`, and `RX_COMPLETE` and `RX_KEYS_<ACTION>` with a comma-separated list, e.g. `RX_COMPLETE=history,shell` or `RX_KEYS_NEXT_SLOT=tab,ctrl+f`. The theme can only be set in the file.
 
@@ -151,7 +154,7 @@ transforms:
   - { key: ctrl+o, op: cycle, flag: output, desc: "cycle output" }
 ```
 
-A transform `key` is `ctrl+<letter>`, `alt+<char>`, or a bare character, which means `alt+<char>`. Plugin shortcuts take precedence over the editor's own keys, so avoid `ctrl+` keys you use in the editor (by default `ctrl+c`, `d`, `e`, `n`, `p`, `s`, `u`, `w` and `z`). `ctrl+i` and `ctrl+m` can't be used, since terminals send them as Tab and Enter.
+A transform `key` is `ctrl+<letter>`, `alt+<char>`, or a bare character, which means `alt+<char>`. Plugin shortcuts take precedence over the editor's own keys, so avoid `ctrl+` keys you use in the editor (by default `ctrl+c`, `d`, `e`, `n`, `p`, `q`, `s`, `u`, `w` and `z`). `ctrl+i` and `ctrl+m` can't be used, since terminals send them as Tab and Enter.
 
 A `cycle` transform steps through the transform's `values`, or else the flag's or positional's `values`. If neither has any, rx cycles through the candidates the editor would list for that slot: history first, then completions. Cycling focuses the slot and selects its new value in the list.
 
