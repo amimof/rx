@@ -7,9 +7,8 @@ Ctrl+X
 Sleep 75ms
 Ctrl+X
 Sleep 1s
-Type v0.40.1
+Ctrl+q
 Sleep 500ms
-Tab@500ms
 Type v0.40.1
 Sleep 500ms
 Enter@2s

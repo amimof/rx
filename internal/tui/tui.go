@@ -98,6 +98,8 @@ type styles struct {
 	// and positional arguments.
 	head, flag, value, arg lipgloss.Style
 	border, prompt         lipgloss.Style
+	// link marks the slots linked to the focused one.
+	link lipgloss.Style
 }
 
 // newStyles draws t with r. Roles t doesn't mention use DefaultTheme.
@@ -118,6 +120,7 @@ func newStyles(r *lipgloss.Renderer, t Theme) styles {
 		arg:     th[RoleArg].style(r),
 		border:  th[RoleBorder].style(r),
 		prompt:  th[RolePrompt].style(r),
+		link:    th[RoleLink].style(r),
 	}
 }
 
@@ -173,6 +176,9 @@ type Model struct {
 	notice string
 	// undo holds the states before each edit.
 	undo []snapshot
+	// linked holds the IDs of the slots linked to the focused one with
+	// ActLink. They take the focused slot's value when it is committed.
+	linked []int
 
 	keys Keymap
 	act  map[string]string // key -> action
@@ -273,6 +279,7 @@ func (m *Model) refocus() {
 		m.focus = 0
 	}
 	m.query, m.sel, m.pin = "", -1, ""
+	m.linked = nil
 	m.load()
 }
 
@@ -598,7 +605,9 @@ func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.sp != nil {
 		for _, t := range m.sp.Transforms {
 			if t.Binding() == k.String() {
-				// Keep a value picked on the focused slot, as Tab does.
+				// Keep a value picked on the focused slot, as Tab does, but
+				// leave the linked slots alone.
+				m.linked = nil
 				m.commit()
 				if t.Op == "focus" {
 					m.focusSlot(t.Target())
@@ -629,7 +638,18 @@ func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	// Any other key is the user taking over the selection.
 	m.pin = ""
-	switch m.act[k.String()] {
+	act := m.act[k.String()]
+	switch act {
+	case ActUp, ActDown, ActClear, ActSource, ActLink, "":
+		// Picking and typing keep the link.
+	case ActAccept, ActRun, ActNextSlot, ActPrevSlot:
+		// commit writes the value to the linked slots and ends the link.
+	default:
+		m.linked = nil
+	}
+	switch act {
+	case ActLink:
+		m.toggleLink()
 	case ActCancel:
 		m.cancelled, m.quitting = true, true
 		return m, tea.Quit
@@ -764,10 +784,14 @@ func (m *Model) pending() *pendingEdit {
 		}
 		p.focus, p.flag = transform.AddFlag(cmd, m.sp, v, m.flagTakesValue(v)), true
 	} else {
-		if cmd.Slots[m.focus].Value == v {
+		if cmd.Slots[m.focus].Value == v && m.linkedSame(v) {
 			return nil
 		}
-		p.focus = transform.SetAt(cmd, m.sp, m.focus, v)
+		id := cmd.Slots[m.focus].ID
+		transform.SetAt(cmd, m.sp, m.focus, v)
+		if p.focus = m.setLinked(cmd, id, v); p.focus < 0 {
+			return nil
+		}
 	}
 	id := cmd.Slots[p.focus].ID
 	res := rule.Settle(cmd, m.sp, st)
@@ -823,6 +847,54 @@ func (m *Model) typeKey(k tea.KeyMsg) {
 			m.filter()
 		}
 	}
+}
+
+// toggleLink ends the link if there is one, else links the focused slot to
+// the other slots with the same value. Without such slots nothing happens.
+func (m *Model) toggleLink() {
+	if m.linked != nil {
+		m.linked = nil
+		return
+	}
+	if m.onAddSlot() {
+		return
+	}
+	f := m.cmd.Slots[m.focus]
+	if f.Value == "" {
+		return
+	}
+	for _, s := range m.cmd.Slots {
+		if s.ID != f.ID && s.Value == f.Value {
+			m.linked = append(m.linked, s.ID)
+		}
+	}
+}
+
+// isLinked reports whether the slot with id is linked to the focused one.
+func (m *Model) isLinked(id int) bool {
+	return slices.Contains(m.linked, id)
+}
+
+// setLinked sets the linked slots still in cmd to v. It returns the index
+// of the slot with id afterwards, since removing mutually exclusive slots
+// may shift it.
+func (m *Model) setLinked(cmd *model.Command, id int, v string) int {
+	for _, l := range m.linked {
+		if i := cmd.FindID(l); i >= 0 {
+			transform.SetAt(cmd, m.sp, i, v)
+		}
+	}
+	return cmd.FindID(id)
+}
+
+// linkedSame reports whether the linked slots already have value v.
+func (m *Model) linkedSame(v string) bool {
+	for _, l := range m.linked {
+		if i := m.cmd.FindID(l); i >= 0 && m.cmd.Slots[i].Value != v {
+			return false
+		}
+	}
+	return true
 }
 
 // focusSlot moves to the slot with key, adding it empty if the command
@@ -923,9 +995,11 @@ func (m *Model) selectPin() {
 }
 
 // commit applies the selected row, or else the typed query, to the focused
-// slot, then runs the rules. It reports whether the slot to fill next was
-// focused: a flag that takes a value was added, or a rule added a slot.
+// slot and the slots linked to it, then runs the rules. It ends the link.
+// It reports whether the slot to fill next was focused: a flag that takes
+// a value was added, or a rule added a slot.
 func (m *Model) commit() bool {
+	defer func() { m.linked = nil }()
 	v := m.value()
 	if v == "" {
 		return false
@@ -936,11 +1010,17 @@ func (m *Model) commit() bool {
 		m.focus = transform.AddFlag(m.cmd, m.sp, v, takes)
 		return m.settle() || takes
 	}
-	same := m.cmd.Slots[m.focus].Value == v
+	same := m.cmd.Slots[m.focus].Value == v && m.linkedSame(v)
 	if !same {
 		m.pushUndo()
 	}
+	id := m.cmd.Slots[m.focus].ID
 	m.focus = transform.SetAt(m.cmd, m.sp, m.focus, v)
+	if i := m.setLinked(m.cmd, id, v); i >= 0 {
+		m.focus = i
+	} else {
+		m.focus = min(m.focus, len(m.cmd.Slots))
+	}
 	return !same && m.settle()
 }
 
@@ -989,6 +1069,9 @@ func (m *Model) View() string {
 	}
 	if m.active != "" {
 		label += " [" + m.active + "]"
+	}
+	if n := len(m.linked); n > 0 {
+		label += fmt.Sprintf(" (+%d linked)", n)
 	}
 	search := fmt.Sprintf("%s %s▏", ls.Bold(true).Render(label+":"), m.query)
 
@@ -1151,7 +1234,8 @@ func (m *Model) previewFocus() (string, int) {
 	focusPart := 0
 	for i, s := range cmd.Slots {
 		focused := i == focus
-		if v := m.value(); focused && v != "" && p == nil {
+		linked := !focused && m.isLinked(s.ID)
+		if v := m.value(); (focused || linked) && v != "" && p == nil {
 			s.Value, s.Dirty = v, true
 		}
 		if focused && p != nil && p.flag {
@@ -1168,7 +1252,7 @@ func (m *Model) previewFocus() (string, int) {
 			}
 			continue
 		}
-		parts = append(parts, m.renderSlot(s.Kind, name, sep, val, focused))
+		parts = append(parts, m.renderSlot(s.Kind, name, sep, val, focused, linked))
 		if focused {
 			focusPart = len(parts) - 1
 		}
@@ -1190,14 +1274,18 @@ func (m *Model) previewFocus() (string, int) {
 	return line, end
 }
 
-// renderSlot colors a slot's flag name and value, reversed if focused.
-func (m *Model) renderSlot(k model.Kind, name, sep, val string, focused bool) string {
+// renderSlot colors a slot's flag name and value, reversed if focused and
+// in the link style if linked to the focused slot.
+func (m *Model) renderSlot(k model.Kind, name, sep, val string, focused, linked bool) string {
 	ns, vs, ss := m.st.flag, m.st.value, lipgloss.NewStyle()
 	if k == model.Positional {
 		vs = m.st.arg
 	}
 	if focused {
 		ns, vs, ss = ns.Reverse(true), vs.Reverse(true), m.st.focus
+	}
+	if linked {
+		ns, vs, ss = m.st.link.Inherit(ns), m.st.link.Inherit(vs), m.st.link
 	}
 	var out string
 	if name != "" {

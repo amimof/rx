@@ -33,6 +33,8 @@ const (
 	RolePrompt = "prompt"
 	// RoleFocus is the separator between the focused flag and its value.
 	RoleFocus = "focus"
+	// RoleLink is a slot linked to the focused one in the preview.
+	RoleLink = "link"
 )
 
 // Style is how a part of the editor is drawn. Colors are an ANSI color
@@ -60,6 +62,7 @@ func DefaultTheme() Theme {
 		RoleBorder:  {Fg: "240", Faint: true},
 		RolePrompt:  {Bold: true},
 		RoleFocus:   {Reverse: true},
+		RoleLink:    {Underline: true},
 	}
 }
 
