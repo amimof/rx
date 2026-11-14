@@ -168,7 +168,7 @@ func (c *Client) do(ctx context.Context, fn func(kind string, fields []string), 
 				for {
 					select {
 					case <-lines:
-					case <-done:
+					case <-done: //nolint:errcheck // the timeout was already reported
 						return
 					}
 				}
