@@ -173,6 +173,97 @@ focus: resource
 	}
 }
 
+func TestInitialFocusLast(t *testing.T) {
+	const last = `
+match: { command: kubectl }
+flags:
+  - { name: namespace, short: n, takes: value }
+  - { name: selector, short: l, takes: value }
+positionals:
+  - { index: 0, name: subcommand }
+focus: [last, selector]
+`
+	const none = `
+match: { command: kubectl }
+flags:
+  - { name: namespace, short: n, takes: value }
+`
+	for _, tt := range []struct {
+		spec, line, last string
+		def              spec.FocusList
+		want             string
+	}{
+		{last, "kubectl get pods -l app=web -n default", "namespace", nil, "namespace"},
+		// Placeholder positionals can be remembered before they're typed.
+		{last, "kubectl -l app=web", "subcommand", nil, "subcommand"},
+		// A remembered slot the command lacks falls through to the next entry.
+		{last, "kubectl get pods -l app=web", "namespace", nil, "selector"},
+		{last, "kubectl get pods -l app=web -n default", "", nil, "selector"},
+		// The configured focus applies when the plugin sets none.
+		{none, "kubectl get pods -o wide -n default", "namespace", spec.FocusList{spec.FocusLast}, "namespace"},
+		{none, "kubectl get pods -o wide -n default", "namespace", nil, "o"},
+		// The plugin's focus wins over the configured one.
+		{last, "kubectl get pods -l app=web -n default", "", spec.FocusList{"namespace"}, "selector"},
+	} {
+		sp, err := spec.Parse([]byte(tt.spec), "test.yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		reg := spec.NewRegistry()
+		reg.Add(sp)
+		c := spec.Classifier{Specs: reg, Infer: takesAll{}}
+		cmd := c.Classify(parse.Parse(tt.line), 0)
+		m := newModel(Options{Cmd: cmd, Spec: reg.Lookup(cmd.Name), Focus: tt.def, LastFocus: tt.last},
+			newStyles(lipgloss.NewRenderer(os.Stderr), nil))
+		if got := m.cmd.Slots[m.initialFocus()].Key; got != tt.want {
+			t.Errorf("%q, last %q: focus = %s, want %s", tt.line, tt.last, got, tt.want)
+		}
+	}
+}
+
+func TestLastFocusOutcome(t *testing.T) {
+	const line = "curl -I -X POST http://localhost:7878 -k"
+	// Without edits, the slot focused at the end is remembered.
+	h := newHarness(t, line, nil)
+	h.focusKey("url")
+	if got := h.m.lastFocus(); got != "url" {
+		t.Fatalf("no edit: last focus = %q", got)
+	}
+	h.m.focus = len(h.m.cmd.Slots)
+	if got := h.m.lastFocus(); got != "" {
+		t.Fatalf("on + flag: last focus = %q", got)
+	}
+
+	// An edited slot is remembered after moving on.
+	h = newHarness(t, line, nil)
+	h.focusKey("request")
+	h.keys(typ("PUT"), key(tea.KeyTab), key(tea.KeyTab))
+	if h.m.cmd.Slots[h.m.focus].Key == "request" {
+		t.Fatal("focus didn't move on")
+	}
+	if got := h.m.lastFocus(); got != "request" {
+		t.Fatalf("after edit: last focus = %q", got)
+	}
+
+	// So is a cycled one.
+	h = newHarness(t, line, nil)
+	h.focusKey("url")
+	h.keys(key(tea.KeyCtrlX))
+	h.focusKey("url")
+	if got := h.m.lastFocus(); got != "request" {
+		t.Fatalf("after cycle: last focus = %q", got)
+	}
+
+	// And a flag added on "+ flag", which the editor then fills.
+	h = newHarness(t, line, nil)
+	h.m.focus = len(h.m.cmd.Slots)
+	h.m.refocus()
+	h.keys(typ("--user"), key(tea.KeyTab), typ("me"), key(tea.KeyEnter))
+	if got := h.m.lastFocus(); got != "user" {
+		t.Fatalf("after adding a flag: last focus = %q (%s)", got, h.m.cmd.Render())
+	}
+}
+
 // takesAll infers that every unknown flag takes a value.
 type takesAll struct{}
 

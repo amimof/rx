@@ -39,6 +39,20 @@ func TestFocus(t *testing.T) {
 			t.Errorf("FocusKey(%q) = %q, want %q", entry, got, want)
 		}
 	}
+	if s.Focus.Remembers() {
+		t.Fatal("focus without last remembers")
+	}
+	s, err = Parse([]byte(flags+"focus: last\n"), "x.yaml")
+	if err != nil || !s.Focus.Remembers() {
+		t.Fatalf("focus: last: %q, err %v", s.Focus, err)
+	}
+	s, err = Parse([]byte(flags+"positionals: [{ index: 0, name: last }]\nfocus: [last, -n]\n"), "x.yaml")
+	if err != nil || !s.Focus.Remembers() {
+		t.Fatalf("focus: [last, -n]: %q, err %v", s.Focus, err)
+	}
+	if errs := s.Validate(); len(errs) != 1 {
+		t.Fatalf("positional named last: errors = %v, want 1", errs)
+	}
 	s, err = Parse([]byte(flags+"focus: [kind, '', '--']\n"), "x.yaml")
 	if err != nil {
 		t.Fatal(err)

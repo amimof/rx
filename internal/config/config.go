@@ -36,6 +36,10 @@ type Config struct {
 	// Rules is when plugin rules run (RX_RULES): tui.RulesLive,
 	// tui.RulesCommit or tui.RulesOff.
 	Rules string
+	// Focus is the focus for commands whose plugin sets none (RX_FOCUS):
+	// spec.FocusLast to start on the slot last edited, or "" for the
+	// default.
+	Focus string
 	// Keys binds the editor's actions. Actions the file doesn't mention
 	// keep their defaults.
 	Keys tui.Keymap
@@ -75,7 +79,7 @@ func Load(file string) (*Config, error) {
 	v.SetConfigFile(file)
 	v.SetConfigType("yaml")
 	defaults := tui.DefaultKeys()
-	settings := []string{"key", "log", "prompt", "complete", "rules"}
+	settings := []string{"key", "log", "prompt", "complete", "rules", "focus"}
 	for a := range defaults {
 		settings = append(settings, "keys."+a)
 	}
@@ -115,6 +119,12 @@ func Load(file string) (*Config, error) {
 		c.Rules = v.GetString("rules")
 		if !slices.Contains(tui.RulesModes, c.Rules) {
 			return nil, fmt.Errorf("config %s: rules: want one of %s, got %q", file, strings.Join(tui.RulesModes, ", "), c.Rules)
+		}
+	}
+	if v.IsSet("focus") {
+		c.Focus = v.GetString("focus")
+		if c.Focus != "" && c.Focus != spec.FocusLast {
+			return nil, fmt.Errorf("config %s: focus: want %s or nothing, got %q", file, spec.FocusLast, c.Focus)
 		}
 	}
 	for a := range defaults {
@@ -215,7 +225,7 @@ func checkKnown(v *viper.Viper, actions tui.Keymap) error {
 	sort.Strings(keys)
 	for _, k := range keys {
 		// The complete and theme sections are checked as they are loaded.
-		if k == "key" || k == "log" || k == "prompt" || k == "rules" || k == "keys" ||
+		if k == "key" || k == "log" || k == "prompt" || k == "rules" || k == "focus" || k == "keys" ||
 			k == "complete" || strings.HasPrefix(k, "complete.") || k == "theme" || strings.HasPrefix(k, "theme.") {
 			continue
 		}

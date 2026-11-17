@@ -5,6 +5,7 @@
 name: git
 match:
   command: git
+focus: last
 flags:
   - { name: message, short: m, takes: value }
 positionals:
