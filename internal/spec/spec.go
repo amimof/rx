@@ -251,10 +251,19 @@ func checkBinding(b string) string {
 	return ""
 }
 
+// FocusLast is the focus entry for the slot the user last edited in this
+// command, remembered across editor sessions.
+const FocusLast = "last"
+
 // FocusList is a list of slot references that unmarshals from either a
 // single string or a list. An entry is a positional name, "pos:N", a long
-// flag name, or a flag as written ("-n", "--namespace", "-name").
+// flag name, a flag as written ("-n", "--namespace", "-name"), or
+// FocusLast.
 type FocusList []string
+
+// Remembers reports whether the list has FocusLast, so the editor should
+// remember the slot the user last edited.
+func (f FocusList) Remembers() bool { return slices.Contains(f, FocusLast) }
 
 func (f *FocusList) UnmarshalYAML(n *yaml.Node) error {
 	if n.Kind == yaml.ScalarNode {
@@ -389,6 +398,9 @@ func (s *Spec) Validate() []error {
 		}
 	}
 	for _, p := range s.Positionals {
+		if p.Name == FocusLast && len(s.Focus) > 0 {
+			add("positional %q: the name means the remembered slot in focus", p.Name)
+		}
 		if p.Provider != "" {
 			if _, ok := s.Providers[p.Provider]; !ok {
 				add("positional %q: unknown provider %q", p.Name, p.Provider)

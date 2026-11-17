@@ -12,9 +12,11 @@ import (
 	"github.com/amimof/rx/internal/complete"
 	"github.com/amimof/rx/internal/config"
 	"github.com/amimof/rx/internal/engine"
+	"github.com/amimof/rx/internal/focus"
 	"github.com/amimof/rx/internal/parse"
 	"github.com/amimof/rx/internal/shell"
 	"github.com/amimof/rx/internal/shell/proto"
+	"github.com/amimof/rx/internal/spec"
 	"github.com/amimof/rx/internal/tui"
 )
 
@@ -95,15 +97,38 @@ func runEdit(shellName string, cursor int, buf string) error {
 	}
 	eng := engine.New(live, &complete.Cache{Dir: filepath.Join(cacheDir(), "complete")})
 	eng.Complete = cfg.Complete
-	out, err := tui.Run(tui.Options{
+	// The plugin's focus list wins; the configured one covers the rest.
+	var focusList spec.FocusList
+	if cfg.Focus != "" {
+		focusList = spec.FocusList{cfg.Focus}
+	}
+	if sp != nil && len(sp.Focus) > 0 {
+		focusList = sp.Focus
+	}
+	var store *focus.Store
+	if focusList.Remembers() {
+		store = focus.Load(filepath.Join(cacheDir(), "focus.json"))
+	}
+	opts := tui.Options{
 		Cmd: cmd, Spec: sp, History: e.hist, Engine: eng, Infer: e.hist, TTY: tty,
 		Keys: cfg.Keys, Prompt: cfg.Prompt, Theme: cfg.Theme, Rules: cfg.Rules,
-	})
+		Focus: focusList,
+	}
+	if store != nil {
+		opts.LastFocus = store.Get(cmd.Name)
+	}
+	out, err := tui.Run(opts)
 	if err != nil {
 		return fail(fmt.Errorf("editor: %w", err))
 	}
 	if out.Cancelled {
 		return cancel()
+	}
+	if store != nil && out.Focus != "" && out.Focus != opts.LastFocus {
+		store.Set(cmd.Name, out.Focus)
+		if err := store.Save(); err != nil {
+			fmt.Fprintln(os.Stderr, "rx: focus:", err)
+		}
 	}
 	rendered := out.Cmd.Render()
 	result := line.Splice(seg, rendered)

@@ -7,6 +7,8 @@
 name: curl
 match:
   command: curl
+# Start on the slot last edited in curl, e.g. -X after changing the method.
+focus: last
 flags:
   - { name: request, short: X, takes: value, values: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
   - { name: header, short: H, takes: value }

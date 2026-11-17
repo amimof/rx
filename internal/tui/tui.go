@@ -47,6 +47,11 @@ type Options struct {
 	// Rules is when plugin rules run: RulesLive (or ""), RulesCommit or
 	// RulesOff.
 	Rules string
+	// Focus is the focus list for commands whose plugin sets none.
+	Focus spec.FocusList
+	// LastFocus is the key of the slot the user last edited in this
+	// command, which a spec.FocusLast entry refers to.
+	LastFocus string
 }
 
 // When plugin rules run.
@@ -69,6 +74,9 @@ type Outcome struct {
 	// Run is set when the user asked the shell to run the command.
 	Run bool
 	Cmd *model.Command
+	// Focus is the key of the slot the user last edited, else of the slot
+	// focused at the end, for spec.FocusLast next time. Empty on "+ flag".
+	Focus string
 }
 
 // Run runs the editor on the terminal until the user accepts or cancels.
@@ -89,7 +97,7 @@ func run(o Options, in io.Reader, out io.Writer) (Outcome, error) {
 		return Outcome{Cancelled: true}, err
 	}
 	fm := final.(*Model)
-	return Outcome{Cancelled: fm.cancelled, Run: fm.run, Cmd: fm.cmd}, nil
+	return Outcome{Cancelled: fm.cancelled, Run: fm.run, Cmd: fm.cmd, Focus: fm.lastFocus()}, nil
 }
 
 type styles struct {
@@ -179,6 +187,8 @@ type Model struct {
 	// linked holds the IDs of the slots linked to the focused one with
 	// ActLink. They take the focused slot's value when it is committed.
 	linked []int
+	// edited is the ID of the slot the user last edited, 0 for none.
+	edited int
 
 	keys Keymap
 	act  map[string]string // key -> action
@@ -250,14 +260,21 @@ func (m *Model) Init() tea.Cmd {
 }
 
 // initialFocus returns the slot to start on: the first of the plugin's
-// focus entries present in the command, else the first value-bearing flag,
-// else the first slot. Starting on the slot under the cursor would be nicer.
+// focus entries (or the configured ones) present in the command, else the
+// first value-bearing flag, else the first slot. Starting on the slot under
+// the cursor would be nicer.
 func (m *Model) initialFocus() int {
-	if m.sp != nil {
-		for _, e := range m.sp.Focus {
-			if i := m.cmd.Find(m.sp.FocusKey(e)); i >= 0 {
-				return i
-			}
+	list := m.o.Focus
+	if m.sp != nil && len(m.sp.Focus) > 0 {
+		list = m.sp.Focus
+	}
+	for _, e := range list {
+		key := m.sp.FocusKey(e)
+		if e == spec.FocusLast {
+			key = m.o.LastFocus
+		}
+		if i := m.cmd.Find(key); key != "" && i >= 0 {
+			return i
 		}
 	}
 	for i, s := range m.cmd.Slots {
@@ -269,6 +286,26 @@ func (m *Model) initialFocus() int {
 }
 
 func (m *Model) onAddSlot() bool { return m.focus >= len(m.cmd.Slots) }
+
+// markEdited records the slot with key as the one the user last edited, if
+// the command has it.
+func (m *Model) markEdited(key string) {
+	if i := m.cmd.Find(key); i >= 0 {
+		m.edited = m.cmd.Slots[i].ID
+	}
+}
+
+// lastFocus returns the key of the slot the user last edited, else of the
+// focused slot, else "" on "+ flag".
+func (m *Model) lastFocus() string {
+	if i := m.cmd.FindID(m.edited); m.edited != 0 && i >= 0 {
+		return m.cmd.Slots[i].Key
+	}
+	if m.onAddSlot() {
+		return ""
+	}
+	return m.cmd.Slots[m.focus].Key
+}
 
 // refocus resets the query and reloads candidates for the focused slot.
 func (m *Model) refocus() {
@@ -624,6 +661,7 @@ func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.errText = err.Error()
 					return m, nil
 				}
+				m.markEdited(t.Target())
 				switch {
 				case m.settle():
 					m.refocus()
@@ -961,6 +999,7 @@ func (m *Model) finishCycle() {
 		m.errText = err.Error()
 		return
 	}
+	m.markEdited(c.key)
 	if m.settle() {
 		m.refocus()
 		return
@@ -1008,13 +1047,15 @@ func (m *Model) commit() bool {
 		m.pushUndo()
 		takes := m.flagTakesValue(v)
 		m.focus = transform.AddFlag(m.cmd, m.sp, v, takes)
+		m.edited = m.cmd.Slots[m.focus].ID
 		return m.settle() || takes
 	}
 	same := m.cmd.Slots[m.focus].Value == v && m.linkedSame(v)
+	id := m.cmd.Slots[m.focus].ID
 	if !same {
 		m.pushUndo()
+		m.edited = id
 	}
-	id := m.cmd.Slots[m.focus].ID
 	m.focus = transform.SetAt(m.cmd, m.sp, m.focus, v)
 	if i := m.setLinked(m.cmd, id, v); i >= 0 {
 		m.focus = i

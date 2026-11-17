@@ -126,6 +126,23 @@ func TestRules(t *testing.T) {
 	}
 }
 
+func TestFocus(t *testing.T) {
+	dir := home(t)
+	c, err := Load("")
+	if err != nil || c.Focus != "" {
+		t.Fatalf("default focus %q, err %v", c.Focus, err)
+	}
+	write(t, filepath.Join(dir, "rx", "config.yaml"), "focus: last\n")
+	if c, err = Load(""); err != nil || c.Focus != spec.FocusLast {
+		t.Fatalf("focus %q, err %v", c.Focus, err)
+	}
+	write(t, filepath.Join(dir, "rx", "config.yaml"), "")
+	t.Setenv("RX_FOCUS", "last")
+	if c, err = Load(""); err != nil || c.Focus != spec.FocusLast {
+		t.Fatalf("env focus %q, err %v", c.Focus, err)
+	}
+}
+
 func TestComplete(t *testing.T) {
 	dir := home(t)
 	c, err := Load("")
@@ -209,6 +226,7 @@ func TestInvalid(t *testing.T) {
 		{"complete: [auto, shell]\n", `complete: "auto" can't be combined`},
 		{"complete: []\n", "complete: empty list of sources"},
 		{"complete: { cobra: true }\n", "complete: want a source or a list"},
+		{"focus: first\n", `focus: want last or nothing, got "first"`},
 		{"rules: always\n", `rules: want one of live, commit, off, got "always"`},
 	} {
 		dir := home(t)

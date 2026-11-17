@@ -98,6 +98,7 @@ log: ~/.cache/rx/rx.log    # widget log file
 prompt: "❯"                # symbol before the command in the editor; "" for none
 complete: auto             # completion sources, or a list of them; plugins may replace it
 rules: live                # when plugin rules run: live, commit or off
+focus: last                # start on the slot last edited, for commands whose plugin sets no focus
 keys:                      # editor keys; a list replaces that action's defaults
   accept:    [enter]
   run:       [ctrl+e]       # accept, then run the command
@@ -125,7 +126,7 @@ Keys are named like `ctrl+e`, `alt+y`, `shift+tab`, `enter`, `esc`, `up`. An emp
 
 Theme roles are `head` (the command word), `flag`, `value` (a flag's value), `arg` (positional arguments), `sel` (the selected candidate), `spinner` (shown while candidates load), `dim` (descriptions, status and the help line), `err`, `border`, `prompt`, `focus` (the `=` between a focused flag and its value) and `link` (slots linked to the focused one). A role takes `fg` and `bg` colors, either an ANSI color number `0`–`255` or hex `#rgb`/`#rrggbb`, and `bold`, `italic`, `faint`, `underline` and `reverse`. Roles you don't list keep their default look. The focused slot is always shown reversed. Hex colors are approximated on terminals with fewer colors, and `NO_COLOR` turns colors off.
 
-Environment variables override the file: `RX_KEY`, `RX_LOG`, `RX_PROMPT`, `RX_RULES`, and `RX_COMPLETE` and `RX_KEYS_<ACTION>` with a comma-separated list, e.g. `RX_COMPLETE=history,shell` or `RX_KEYS_NEXT_SLOT=tab,ctrl+f`. The theme can only be set in the file.
+Environment variables override the file: `RX_KEY`, `RX_LOG`, `RX_PROMPT`, `RX_RULES`, `RX_FOCUS`, and `RX_COMPLETE` and `RX_KEYS_<ACTION>` with a comma-separated list, e.g. `RX_COMPLETE=history,shell` or `RX_KEYS_NEXT_SLOT=tab,ctrl+f`. The theme can only be set in the file.
 
 `key` and `log` are baked into the widget by `rx init`, so changes take effect in new shells. To use a different key than Ctrl-X Ctrl-X without the config file, set `RX_KEY` before the `eval` line, or call `rx-bind` after it. The key is written in caret notation (`^X^X`, `^[r` for Alt+r), which every shell accepts. bash also takes readline syntax (`\C-x\C-x`), and fish its own escapes (`\cx\cx`) and, from fish 4, key names (`ctrl-x,ctrl-x`). The default replaces the `exchange-point-and-mark` binding of zsh and bash in emacs mode; pick another key if you use it.
 
@@ -161,6 +162,14 @@ A `cycle` transform steps through the transform's `values`, or else the flag's o
 A `focus` transform jumps to a slot so you can search its candidates and replace the value, adding the slot if the command doesn't have it yet. In kubectl, `Ctrl+G` jumps to the resource name.
 
 Use `focus:` to choose which slot the editor starts on. It takes a positional name, `pos:N`, or a flag (`namespace`, `--namespace`, `-n`), or a list of these. The first one present in the command wins. Positionals declared in the plugin can always be focused, even before they're typed. Flags that aren't in the command are skipped. Without a match, rx starts on the first flag that takes a value.
+
+The entry `last` is the slot you last edited in that command, remembered across sessions in `~/.cache/rx/focus.json`. It is saved when you accept with Enter or Ctrl-E, not when you cancel. If you didn't edit anything, the slot focused at the end is saved. Memory is per command name, so after changing `-X POST` in `curl -I -X POST http://localhost:7878 -k`, the next curl you open starts on `-X` again. If the command has no such slot, the next entry is tried. All bundled plugins use `focus: last`. For commands without a plugin, or whose plugin sets no focus, turn it on with `focus: last` in the [config file](#configuration).
+
+```yaml
+name: curl
+match: { command: curl }
+focus: [last, request] # the slot last edited, else -X
+```
 
 ```yaml
 name: flux
