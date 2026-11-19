@@ -168,6 +168,29 @@ func TestFocusLast(t *testing.T) {
 	}
 }
 
+func TestLegend(t *testing.T) {
+	dir := home(t)
+	c, err := Load("")
+	if err != nil || !c.Legend {
+		t.Fatalf("default legend %v, err %v", c.Legend, err)
+	}
+	write(t, filepath.Join(dir, "rx", "config.yaml"), "legend: false\n")
+	if c, err = Load(""); err != nil || c.Legend {
+		t.Fatalf("legend %v, err %v", c.Legend, err)
+	}
+	// The environment overrides the file.
+	t.Setenv("RX_LEGEND", "true")
+	if c, err = Load(""); err != nil || !c.Legend {
+		t.Fatalf("env legend %v, err %v", c.Legend, err)
+	}
+	write(t, filepath.Join(dir, "rx", "config.yaml"), "legend: maybe\n")
+	t.Setenv("RX_LEGEND", "")
+	os.Unsetenv("RX_LEGEND")
+	if _, err = Load(""); err == nil || !strings.Contains(err.Error(), "legend: want true or false") {
+		t.Fatalf("invalid legend: err %v", err)
+	}
+}
+
 func TestComplete(t *testing.T) {
 	dir := home(t)
 	c, err := Load("")
