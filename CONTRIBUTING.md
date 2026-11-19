@@ -1,6 +1,6 @@
 # Contributing
 
-Issues and pull requests are welcome. rx is an early MVP, so please open an issue before starting on larger changes.
+Issues and pull requests are welcome. Please open an issue before starting on larger changes.
 
 ## Setup
 

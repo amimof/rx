@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -40,6 +41,10 @@ type Config struct {
 	// spec.FocusLast to start on the slot last edited, or "" for the
 	// default.
 	Focus string
+	// FocusLast remembers the slot last edited per command, for focus
+	// lists with spec.FocusLast (RX_FOCUS_LAST). Off, those entries are
+	// skipped and nothing is remembered.
+	FocusLast bool
 	// Keys binds the editor's actions. Actions the file doesn't mention
 	// keep their defaults.
 	Keys tui.Keymap
@@ -79,7 +84,7 @@ func Load(file string) (*Config, error) {
 	v.SetConfigFile(file)
 	v.SetConfigType("yaml")
 	defaults := tui.DefaultKeys()
-	settings := []string{"key", "log", "prompt", "complete", "rules", "focus"}
+	settings := []string{"key", "log", "prompt", "complete", "rules", "focus", "focus_last"}
 	for a := range defaults {
 		settings = append(settings, "keys."+a)
 	}
@@ -87,7 +92,7 @@ func Load(file string) (*Config, error) {
 		_ = v.BindEnv(s, envName(s))
 	}
 
-	c := &Config{Key: DefaultKey, Prompt: tui.DefaultPrompt, Rules: tui.RulesLive, Keys: defaults, Theme: tui.DefaultTheme()}
+	c := &Config{Key: DefaultKey, Prompt: tui.DefaultPrompt, Rules: tui.RulesLive, FocusLast: true, Keys: defaults, Theme: tui.DefaultTheme()}
 	if err := v.ReadInConfig(); err == nil {
 		c.File = file
 	} else if explicit || !errors.Is(err, fs.ErrNotExist) {
@@ -126,6 +131,15 @@ func Load(file string) (*Config, error) {
 		if c.Focus != "" && c.Focus != spec.FocusLast {
 			return nil, fmt.Errorf("config %s: focus: want %s or nothing, got %q", file, spec.FocusLast, c.Focus)
 		}
+	}
+	if v.IsSet("focus_last") {
+		// YAML gives a bool, the environment a string.
+		s := fmt.Sprint(v.Get("focus_last"))
+		b, err := strconv.ParseBool(s)
+		if err != nil {
+			return nil, fmt.Errorf("config %s: focus_last: want true or false, got %q", file, s)
+		}
+		c.FocusLast = b
 	}
 	for a := range defaults {
 		if k := "keys." + a; v.IsSet(k) {
@@ -225,7 +239,7 @@ func checkKnown(v *viper.Viper, actions tui.Keymap) error {
 	sort.Strings(keys)
 	for _, k := range keys {
 		// The complete and theme sections are checked as they are loaded.
-		if k == "key" || k == "log" || k == "prompt" || k == "rules" || k == "focus" || k == "keys" ||
+		if k == "key" || k == "log" || k == "prompt" || k == "rules" || k == "focus" || k == "focus_last" || k == "keys" ||
 			k == "complete" || strings.HasPrefix(k, "complete.") || k == "theme" || strings.HasPrefix(k, "theme.") {
 			continue
 		}

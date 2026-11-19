@@ -9,8 +9,6 @@
   <img src="./demo/demo.gif"/>
 </p>
 
-> ⚠️ rx is an early MVP. Things will change, break and get renamed. Feedback and ideas are very welcome.
-
 You run the same commands over and over with small differences:
 
 ```sh
@@ -80,6 +78,8 @@ rx-doctor
 | `Ctrl+E` | Put the command back in the prompt and run it |
 | `Ctrl+S` | Cycle the suggestion source: all, then each [enabled source](#completion-sources) the slot has |
 | `Ctrl+D` | Remove the current slot |
+| `Ctrl+Q` | [Link](#configuration) the slot to the other slots with the same value |
+| `Ctrl+F` | [Zoom](#zoom) in on the slot to edit one part of its value, e.g. a URL's port |
 | `Ctrl+Z` | Undo the last edit, along with what [rules](#rules) did after it |
 | `Ctrl+U` / `Ctrl+W` | Clear the search |
 | `Esc` | Clear the search, press again to cancel |
@@ -99,6 +99,7 @@ prompt: "❯"                # symbol before the command in the editor; "" for n
 complete: auto             # completion sources, or a list of them; plugins may replace it
 rules: live                # when plugin rules run: live, commit or off
 focus: last                # start on the slot last edited, for commands whose plugin sets no focus
+focus_last: true           # remember the slot last edited per command; false turns "last" off everywhere
 keys:                      # editor keys; a list replaces that action's defaults
   accept:    [enter]
   run:       [ctrl+e]       # accept, then run the command
@@ -113,6 +114,7 @@ keys:                      # editor keys; a list replaces that action's defaults
   clear:     [ctrl+u, ctrl+w]
   undo:      [ctrl+z]
   link:      [ctrl+q]       # edit every slot with the focused slot's value
+  zoom:      [ctrl+f]       # edit one part of the focused value
 theme:                     # editor colors; a role replaces that role's default
   flag:   "#5f87ff"        # a string sets only the text color
   value:  { fg: 2, bold: true }
@@ -124,9 +126,19 @@ Keys are named like `ctrl+e`, `alt+y`, `shift+tab`, `enter`, `esc`, `up`. An emp
 
 `link` edits repeated values together. In `git tag -a v0.1.0 -m v0.1.0`, Ctrl-Q on either `v0.1.0` links it to the other one, which is then underlined. What you type or pick shows up in both, and Tab, Enter or Ctrl-E writes it to both as one edit. ↑/↓, Ctrl-U and Ctrl-S keep the link; any other key, or Ctrl-Q again, ends it without changing the other slots.
 
+### Zoom
+
+Typing replaces the whole value of a slot. To change only part of it, press Ctrl-F (`zoom`). In `curl https://localhost:7878/compute/v2/servers`, the URL splits into scheme, host, port and path segments, and the first part, `https`, is highlighted. Tab/Shift-Tab move between parts, wrapping around at the ends, and what you type or pick replaces only the highlighted one. To change the port, press Ctrl-F, Tab twice, type `8080` and press Ctrl-F again.
+
+- The list shows the values the same part had in this slot's history, e.g. the other ports you used in curl URLs.
+- Ctrl-F zooms out, writing the value to the slot as one edit. Enter does the same; a second Enter accepts the command. Ctrl-E writes it and runs the command.
+- Ctrl-Z undoes the last part you changed. Esc clears what you typed; pressed again, it leaves zoom without changing the slot.
+
+rx recognises URLs (scheme, user, host, port, path segments, query parameters, fragment), `[user@]host[:port]`, `key=value`, comma lists and slash paths. Anything else is split on `/ : = , @ ? & ;` and spaces. A value with only one part can't be zoomed in on.
+
 Theme roles are `head` (the command word), `flag`, `value` (a flag's value), `arg` (positional arguments), `sel` (the selected candidate), `spinner` (shown while candidates load), `dim` (descriptions, status and the help line), `err`, `border`, `prompt`, `focus` (the `=` between a focused flag and its value) and `link` (slots linked to the focused one). A role takes `fg` and `bg` colors, either an ANSI color number `0`–`255` or hex `#rgb`/`#rrggbb`, and `bold`, `italic`, `faint`, `underline` and `reverse`. Roles you don't list keep their default look. The focused slot is always shown reversed. Hex colors are approximated on terminals with fewer colors, and `NO_COLOR` turns colors off.
 
-Environment variables override the file: `RX_KEY`, `RX_LOG`, `RX_PROMPT`, `RX_RULES`, `RX_FOCUS`, and `RX_COMPLETE` and `RX_KEYS_<ACTION>` with a comma-separated list, e.g. `RX_COMPLETE=history,shell` or `RX_KEYS_NEXT_SLOT=tab,ctrl+f`. The theme can only be set in the file.
+Environment variables override the file: `RX_KEY`, `RX_LOG`, `RX_PROMPT`, `RX_RULES`, `RX_FOCUS`, `RX_FOCUS_LAST`, and `RX_COMPLETE` and `RX_KEYS_<ACTION>` with a comma-separated list, e.g. `RX_COMPLETE=history,shell` or `RX_KEYS_NEXT_SLOT=tab,ctrl+b`. The theme can only be set in the file.
 
 `key` and `log` are baked into the widget by `rx init`, so changes take effect in new shells. To use a different key than Ctrl-X Ctrl-X without the config file, set `RX_KEY` before the `eval` line, or call `rx-bind` after it. The key is written in caret notation (`^X^X`, `^[r` for Alt+r), which every shell accepts. bash also takes readline syntax (`\C-x\C-x`), and fish its own escapes (`\cx\cx`) and, from fish 4, key names (`ctrl-x,ctrl-x`). The default replaces the `exchange-point-and-mark` binding of zsh and bash in emacs mode; pick another key if you use it.
 
@@ -155,7 +167,7 @@ transforms:
   - { key: ctrl+o, op: cycle, flag: output, desc: "cycle output" }
 ```
 
-A transform `key` is `ctrl+<letter>`, `alt+<char>`, or a bare character, which means `alt+<char>`. Plugin shortcuts take precedence over the editor's own keys, so avoid `ctrl+` keys you use in the editor (by default `ctrl+c`, `d`, `e`, `n`, `p`, `q`, `s`, `u`, `w` and `z`). `ctrl+i` and `ctrl+m` can't be used, since terminals send them as Tab and Enter.
+A transform `key` is `ctrl+<letter>`, `alt+<char>`, or a bare character, which means `alt+<char>`. Plugin shortcuts take precedence over the editor's own keys, so avoid `ctrl+` keys you use in the editor (by default `ctrl+c`, `d`, `e`, `f`, `n`, `p`, `q`, `s`, `u`, `w` and `z`). `ctrl+i` and `ctrl+m` can't be used, since terminals send them as Tab and Enter.
 
 A `cycle` transform steps through the transform's `values`, or else the flag's or positional's `values`. If neither has any, rx cycles through the candidates the editor would list for that slot: history first, then completions. Cycling focuses the slot and selects its new value in the list.
 
@@ -163,7 +175,7 @@ A `focus` transform jumps to a slot so you can search its candidates and replace
 
 Use `focus:` to choose which slot the editor starts on. It takes a positional name, `pos:N`, or a flag (`namespace`, `--namespace`, `-n`), or a list of these. The first one present in the command wins. Positionals declared in the plugin can always be focused, even before they're typed. Flags that aren't in the command are skipped. Without a match, rx starts on the first flag that takes a value.
 
-The entry `last` is the slot you last edited in that command, remembered across sessions in `~/.cache/rx/focus.json`. It is saved when you accept with Enter or Ctrl-E, not when you cancel. If you didn't edit anything, the slot focused at the end is saved. Memory is per command name, so after changing `-X POST` in `curl -I -X POST http://localhost:7878 -k`, the next curl you open starts on `-X` again. If the command has no such slot, the next entry is tried. All bundled plugins use `focus: last`. For commands without a plugin, or whose plugin sets no focus, turn it on with `focus: last` in the [config file](#configuration).
+The entry `last` is the slot you last edited in that command, remembered across sessions in `~/.cache/rx/focus.json`. It is saved when you accept with Enter or Ctrl-E, not when you cancel. If you didn't edit anything, the slot focused at the end is saved. Memory is per command name, so after changing `-X POST` in `curl -I -X POST http://localhost:7878 -k`, the next curl you open starts on `-X` again. If the command has no such slot, the next entry is tried. All bundled plugins use `focus: last`. For commands without a plugin, or whose plugin sets no focus, turn it on with `focus: last` in the [config file](#configuration). `focus_last: false` (or `RX_FOCUS_LAST=false`) turns it off everywhere, including in plugins: `last` entries are skipped, and nothing is read from or saved to `focus.json`.
 
 ```yaml
 name: curl
@@ -275,4 +287,4 @@ In the editor, `Ctrl+S` switches to a single source for the rest of the session.
 
 ## Contributing
 
-Issues and pull requests are welcome. Since this is an MVP, please open an issue before starting on larger changes. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to build, test and add support for another shell.
+Issues and pull requests are welcome. Please open an issue before starting on larger changes. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to build, test and add support for another shell.

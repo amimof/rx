@@ -189,6 +189,9 @@ type Model struct {
 	linked []int
 	// edited is the ID of the slot the user last edited, 0 for none.
 	edited int
+	// zoom is set while editing the focused value one part at a time
+	// (ActZoom).
+	zoom *zoomState
 
 	keys Keymap
 	act  map[string]string // key -> action
@@ -307,7 +310,8 @@ func (m *Model) lastFocus() string {
 	return m.cmd.Slots[m.focus].Key
 }
 
-// refocus resets the query and reloads candidates for the focused slot.
+// refocus resets the query, leaves zoom and reloads candidates for the
+// focused slot.
 func (m *Model) refocus() {
 	if m.focus > len(m.cmd.Slots) {
 		m.focus = len(m.cmd.Slots)
@@ -317,12 +321,17 @@ func (m *Model) refocus() {
 	}
 	m.query, m.sel, m.pin = "", -1, ""
 	m.linked = nil
+	m.zoom = nil
 	m.load()
 }
 
 // load reloads candidates for the focused slot from the active source,
-// keeping the query.
+// or for the zoomed part, keeping the query.
 func (m *Model) load() {
+	if m.zoom != nil {
+		m.loadZoom()
+		return
+	}
 	m.cands = map[string]*row{}
 	m.message, m.errText = "", ""
 	m.reqID++
@@ -541,8 +550,12 @@ func (m *Model) selected() string {
 }
 
 // value returns what the focused slot is set to on commit: the selected
-// row, else the typed query, else "" to keep the current value.
+// row, else the typed query, else "" to keep the current value. While
+// zoomed in, it is the value rebuilt from its parts.
 func (m *Model) value() string {
+	if m.zoom != nil {
+		return m.zoomValue()
+	}
 	if v := m.selected(); v != "" {
 		return v
 	}
@@ -639,6 +652,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.notice = ""
+	if m.zoom != nil && m.zoomKey(k) {
+		return m, nil
+	}
 	if m.sp != nil {
 		for _, t := range m.sp.Transforms {
 			if t.Binding() == k.String() {
@@ -743,6 +759,8 @@ func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.filter()
 	case ActUndo:
 		m.undoLast()
+	case ActZoom:
+		m.zoomIn()
 	default:
 		m.typeKey(k)
 	}
@@ -1107,6 +1125,9 @@ func (m *Model) View() string {
 	if !m.onAddSlot() {
 		s := m.cmd.Slots[m.focus]
 		label, ls = s.Label, m.kindStyle(s.Kind)
+		if m.zoom != nil {
+			label += " › " + m.partName()
+		}
 	}
 	if m.active != "" {
 		label += " [" + m.active + "]"
@@ -1293,7 +1314,12 @@ func (m *Model) previewFocus() (string, int) {
 			}
 			continue
 		}
-		parts = append(parts, m.renderSlot(s.Kind, name, sep, val, focused, linked))
+		if focused && m.zoom != nil {
+			lo, hi := m.zoomRange(val)
+			parts = append(parts, m.renderZoomed(s.Kind, name, sep, val, lo, hi))
+		} else {
+			parts = append(parts, m.renderSlot(s.Kind, name, sep, val, focused, linked))
+		}
 		if focused {
 			focusPart = len(parts) - 1
 		}
@@ -1369,6 +1395,9 @@ func slotParts(s model.Slot) (name, sep, value string) {
 func (m *Model) helpGroups() [][]string {
 	undo := len(m.undo) > 0 || (m.sp != nil && len(m.sp.Transforms)+len(m.sp.Rules) > 0)
 	groups := [][]string{m.keys.helpItems(undo)}
+	if m.zoom != nil {
+		groups[0] = m.keys.zoomHelpItems()
+	}
 	if m.sp != nil {
 		var ts []string
 		for _, t := range m.sp.Transforms {

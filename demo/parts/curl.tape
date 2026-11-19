@@ -6,12 +6,17 @@ Sleep 1s
 Ctrl+X
 Sleep 75ms
 Ctrl+X
-Sleep 2s
+Sleep 1s
 
-# Pick another endpoint from history
-Type 'flav'
+# Zoom in on URL and change port and path
+Ctrl+f
 Sleep 500ms
-Ctrl+N
+Tab@500ms 2
+Sleep 500ms
+Type '8443'
+Sleep 500ms
+Tab@500ms 3
+Type 'instances'
 Sleep 1s
 
 # Switch to POST with the curl plugin's shortcut. The post-adds-body rule
@@ -26,19 +31,5 @@ Type 'max'
 Sleep 500ms
 Tab@500ms
 Ctrl+N
-Sleep 750ms
-Enter@2s
-
-# Drop -k and the body. The rule doesn't add it back.
-Ctrl+X
-Sleep 75ms
-Ctrl+X
-Sleep 1s
-Shift+Tab
-Sleep 500ms
-Ctrl+D
-Sleep 750ms
-Tab@500ms
-Ctrl+D
 Sleep 750ms
 Enter@2s
