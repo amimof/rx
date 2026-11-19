@@ -61,6 +61,9 @@ type Slot struct {
 	// rendering an unmodified slot, preserving quoting.
 	Raw   string
 	Dirty bool
+	// Quote is how the value is quoted when rendered: ' or " always quote,
+	// and 0 quotes only if needed. It starts as the source's quoting.
+	Quote byte
 	// ID identifies the slot within its command while slots move, e.g. to
 	// revert a rule. 0 until assigned by AssignIDs or Add.
 	ID int
@@ -117,6 +120,13 @@ func (c *Command) SetValue(i int, v string) {
 		return
 	}
 	c.Slots[i].Value = v
+	c.Slots[i].Dirty = true
+	c.Changed = true
+}
+
+// SetQuote changes how the value of slot i is quoted.
+func (c *Command) SetQuote(i int, q byte) {
+	c.Slots[i].Quote = q
 	c.Slots[i].Dirty = true
 	c.Changed = true
 }
@@ -257,14 +267,14 @@ func (s Slot) Render() string {
 		}
 		switch s.Style {
 		case Equals:
-			return s.Name + "=" + parse.Quote(s.Value)
+			return s.Name + "=" + parse.QuoteAs(s.Value, s.Quote)
 		case Attached:
-			return s.Name + parse.Quote(s.Value)
+			return s.Name + parse.QuoteAs(s.Value, s.Quote)
 		}
-		return s.Name + " " + parse.Quote(s.Value)
+		return s.Name + " " + parse.QuoteAs(s.Value, s.Quote)
 	}
 	if s.Value == "" {
 		return ""
 	}
-	return parse.Quote(s.Value)
+	return parse.QuoteAs(s.Value, s.Quote)
 }

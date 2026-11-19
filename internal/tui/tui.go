@@ -22,6 +22,7 @@ import (
 	"github.com/amimof/rx/internal/engine"
 	"github.com/amimof/rx/internal/history"
 	"github.com/amimof/rx/internal/model"
+	"github.com/amimof/rx/internal/parse"
 	"github.com/amimof/rx/internal/rule"
 	"github.com/amimof/rx/internal/spec"
 	"github.com/amimof/rx/internal/transform"
@@ -761,10 +762,59 @@ func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.undoLast()
 	case ActZoom:
 		m.zoomIn()
+	case ActQuote:
+		m.cycleQuote()
 	default:
 		m.typeKey(k)
 	}
 	return m, nil
+}
+
+// quoteCycle is the order ActQuote moves through: single quotes, double
+// quotes, then quoting only if needed.
+var quoteCycle = []byte{'\'', '"', 0}
+
+// cycleQuote commits a picked value, as transforms do, then quotes the
+// focused value with the next style in quoteCycle that changes how it is
+// written. "a b" is quoted either way, so 0 is skipped for it, and double
+// quotes are skipped for a value with "!".
+func (m *Model) cycleQuote() {
+	if m.commit() {
+		// Focused a new slot to fill, which has nothing to quote yet.
+		m.refocus()
+		return
+	}
+	if m.onAddSlot() || m.cmd.Slots[m.focus].Kind == model.Bool || m.cmd.Slots[m.focus].Value == "" {
+		m.refocus()
+		return
+	}
+	s := m.cmd.Slots[m.focus]
+	cur := quotedValue(s)
+	at := slices.Index(quoteCycle, s.Quote)
+	for i := 1; i < len(quoteCycle); i++ {
+		q := quoteCycle[(at+i)%len(quoteCycle)]
+		if parse.QuoteAs(s.Value, q) == cur {
+			continue
+		}
+		m.pushUndo()
+		m.cmd.SetQuote(m.focus, q)
+		m.edited = s.ID
+		m.settle()
+		m.refocus()
+		return
+	}
+	m.refocus()
+	m.notice = "no other quoting for this value"
+}
+
+// quotedValue returns the value as the slot writes it, quotes included.
+func quotedValue(s model.Slot) string {
+	if !s.Dirty && s.Raw != "" {
+		if _, _, v := slotParts(s); v != "" {
+			return v
+		}
+	}
+	return parse.QuoteAs(s.Value, s.Quote)
 }
 
 // settle runs the plugin's rules after an edit, keeps the focus on the same

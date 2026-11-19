@@ -29,6 +29,9 @@ const (
 	// ActZoom splits the focused value into parts, e.g. the host and port
 	// of a URL, to edit one at a time. Pressed again, it applies them.
 	ActZoom = "zoom"
+	// ActQuote cycles how the focused value is quoted: single quotes,
+	// double quotes, then only if needed.
+	ActQuote = "quote"
 )
 
 // Keymap maps editor actions to the keys that trigger them. Keys are named
@@ -53,6 +56,7 @@ func DefaultKeys() Keymap {
 		ActUndo:     {"ctrl+z"},
 		ActLink:     {"ctrl+q"},
 		ActZoom:     {"ctrl+f"},
+		ActQuote:    {"ctrl+y"},
 	}
 }
 
@@ -162,6 +166,7 @@ func (k Keymap) helpItems(undo bool) []string {
 	add("drop", ActDrop)
 	add("link", ActLink)
 	add("zoom", ActZoom)
+	add("quote", ActQuote)
 	if undo {
 		add("undo", ActUndo)
 	}
