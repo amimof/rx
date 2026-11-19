@@ -109,6 +109,8 @@ type styles struct {
 	border, prompt         lipgloss.Style
 	// link marks the slots linked to the focused one.
 	link lipgloss.Style
+	// cursor marks the cursor in the search line in insert mode.
+	cursor lipgloss.Style
 }
 
 // newStyles draws t with r. Roles t doesn't mention use DefaultTheme.
@@ -130,6 +132,7 @@ func newStyles(r *lipgloss.Renderer, t Theme) styles {
 		border:  th[RoleBorder].style(r),
 		prompt:  th[RolePrompt].style(r),
 		link:    th[RoleLink].style(r),
+		cursor:  r.NewStyle().Reverse(true),
 	}
 }
 
@@ -193,6 +196,8 @@ type Model struct {
 	// zoom is set while editing the focused value one part at a time
 	// (ActZoom).
 	zoom *zoomState
+	// insert is set while the query is edited at a cursor (ActInsert).
+	insert *insertState
 
 	keys Keymap
 	act  map[string]string // key -> action
@@ -311,8 +316,8 @@ func (m *Model) lastFocus() string {
 	return m.cmd.Slots[m.focus].Key
 }
 
-// refocus resets the query, leaves zoom and reloads candidates for the
-// focused slot.
+// refocus resets the query, leaves zoom and insert mode and reloads
+// candidates for the focused slot.
 func (m *Model) refocus() {
 	if m.focus > len(m.cmd.Slots) {
 		m.focus = len(m.cmd.Slots)
@@ -323,6 +328,7 @@ func (m *Model) refocus() {
 	m.query, m.sel, m.pin = "", -1, ""
 	m.linked = nil
 	m.zoom = nil
+	m.insert = nil
 	m.load()
 }
 
@@ -653,6 +659,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.notice = ""
+	if m.insert != nil && m.insertKey(k) {
+		return m, nil
+	}
 	if m.zoom != nil && m.zoomKey(k) {
 		return m, nil
 	}
@@ -695,7 +704,7 @@ func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	m.pin = ""
 	act := m.act[k.String()]
 	switch act {
-	case ActUp, ActDown, ActClear, ActSource, ActLink, "":
+	case ActUp, ActDown, ActClear, ActSource, ActLink, ActInsert, "":
 		// Picking and typing keep the link.
 	case ActAccept, ActRun, ActNextSlot, ActPrevSlot:
 		// commit writes the value to the linked slots and ends the link.
@@ -762,6 +771,8 @@ func (m *Model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.undoLast()
 	case ActZoom:
 		m.zoomIn()
+	case ActInsert:
+		m.insertIn()
 	case ActQuote:
 		m.cycleQuote()
 	default:
@@ -1185,7 +1196,12 @@ func (m *Model) View() string {
 	if n := len(m.linked); n > 0 {
 		label += fmt.Sprintf(" (+%d linked)", n)
 	}
-	search := fmt.Sprintf("%s %s▏", ls.Bold(true).Render(label+":"), m.query)
+	query := m.query + "▏"
+	if m.insert != nil {
+		label += " [insert]"
+		query = withCursor(m.query, len(string([]rune(m.query)[:m.insert.cur])), lipgloss.NewStyle(), m.st.cursor)
+	}
+	search := ls.Bold(true).Render(label+":") + " " + query
 
 	var status []string
 	switch {
@@ -1364,11 +1380,15 @@ func (m *Model) previewFocus() (string, int) {
 			}
 			continue
 		}
+		cur := -1
+		if focused {
+			cur = m.insertOffset(val)
+		}
 		if focused && m.zoom != nil {
 			lo, hi := m.zoomRange(val)
-			parts = append(parts, m.renderZoomed(s.Kind, name, sep, val, lo, hi))
+			parts = append(parts, m.renderZoomed(s.Kind, name, sep, val, lo, hi, cur))
 		} else {
-			parts = append(parts, m.renderSlot(s.Kind, name, sep, val, focused, linked))
+			parts = append(parts, m.renderSlot(s.Kind, name, sep, val, focused, linked, cur))
 		}
 		if focused {
 			focusPart = len(parts) - 1
@@ -1392,8 +1412,9 @@ func (m *Model) previewFocus() (string, int) {
 }
 
 // renderSlot colors a slot's flag name and value, reversed if focused and
-// in the link style if linked to the focused slot.
-func (m *Model) renderSlot(k model.Kind, name, sep, val string, focused, linked bool) string {
+// in the link style if linked to the focused slot. In insert mode, the
+// cursor at byte cur of the value is not reversed; -1 shows none.
+func (m *Model) renderSlot(k model.Kind, name, sep, val string, focused, linked bool, cur int) string {
 	ns, vs, ss := m.st.flag, m.st.value, lipgloss.NewStyle()
 	if k == model.Positional {
 		vs = m.st.arg
@@ -1411,7 +1432,10 @@ func (m *Model) renderSlot(k model.Kind, name, sep, val string, focused, linked 
 	if sep != "" {
 		out += ss.Render(sep)
 	}
-	if val != "" {
+	switch {
+	case focused && cur >= 0:
+		out += withCursor(val, cur, vs, vs.Reverse(false))
+	case val != "":
 		out += vs.Render(val)
 	}
 	return out
@@ -1441,8 +1465,12 @@ func slotParts(s model.Slot) (name, sep, value string) {
 }
 
 // helpGroups returns the legend items: the editor's keys, then the
-// plugin's shortcuts.
+// plugin's shortcuts. Insert mode shows only its own keys, since the
+// shortcuts don't work in it.
 func (m *Model) helpGroups() [][]string {
+	if m.insert != nil {
+		return [][]string{m.keys.insertHelpItems()}
+	}
 	undo := len(m.undo) > 0 || (m.sp != nil && len(m.sp.Transforms)+len(m.sp.Rules) > 0)
 	groups := [][]string{m.keys.helpItems(undo)}
 	if m.zoom != nil {
