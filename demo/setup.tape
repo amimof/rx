@@ -8,6 +8,10 @@ Set Shell "zsh"
 # Initialize rx and clear the screen before recording starts. The sourcing
 # tape calls Show, so it can run its own hidden setup first.
 Hide
+# Start on the same slots every time; rx would otherwise remember the slot
+# last edited in earlier recordings.
+Type 'export RX_FOCUS_LAST=false'
+Enter
 Type 'eval "$(../bin/rx init zsh)"'
 Enter
 Type "clear"

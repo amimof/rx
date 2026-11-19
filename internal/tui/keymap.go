@@ -26,6 +26,9 @@ const (
 	// ActLink links the focused slot to the other slots with the same
 	// value, so typing changes them all.
 	ActLink = "link"
+	// ActZoom splits the focused value into parts, e.g. the host and port
+	// of a URL, to edit one at a time. Pressed again, it applies them.
+	ActZoom = "zoom"
 )
 
 // Keymap maps editor actions to the keys that trigger them. Keys are named
@@ -49,6 +52,7 @@ func DefaultKeys() Keymap {
 		ActClear:    {"ctrl+u", "ctrl+w"},
 		ActUndo:     {"ctrl+z"},
 		ActLink:     {"ctrl+q"},
+		ActZoom:     {"ctrl+f"},
 	}
 }
 
@@ -121,24 +125,33 @@ func keyLabel(key string) string {
 	return key
 }
 
+// item returns a help line entry for actions, e.g. "^e run", or "" if
+// none of them is bound.
+func (k Keymap) item(desc string, actions ...string) string {
+	var ls []string
+	for _, a := range actions {
+		if l := k.label(a); l != "" {
+			ls = append(ls, l)
+		}
+	}
+	if len(ls) == 0 {
+		return ""
+	}
+	sep := "/"
+	if slices.Equal(ls, []string{"↑", "↓"}) {
+		sep = ""
+	}
+	return strings.Join(ls, sep) + " " + desc
+}
+
 // helpItems returns the help line's entries for the editor's own keys,
 // e.g. "^e run". undo is shown only if there is something to undo or the
 // plugin has transforms or rules.
 func (k Keymap) helpItems(undo bool) []string {
 	var parts []string
 	add := func(desc string, actions ...string) {
-		var ls []string
-		for _, a := range actions {
-			if l := k.label(a); l != "" {
-				ls = append(ls, l)
-			}
-		}
-		if len(ls) > 0 {
-			sep := "/"
-			if slices.Equal(ls, []string{"↑", "↓"}) {
-				sep = ""
-			}
-			parts = append(parts, strings.Join(ls, sep)+" "+desc)
+		if it := k.item(desc, actions...); it != "" {
+			parts = append(parts, it)
 		}
 	}
 	add("slot", ActNextSlot, ActPrevSlot)
@@ -148,9 +161,28 @@ func (k Keymap) helpItems(undo bool) []string {
 	add("source", ActSource)
 	add("drop", ActDrop)
 	add("link", ActLink)
+	add("zoom", ActZoom)
 	if undo {
 		add("undo", ActUndo)
 	}
 	add("cancel", ActBack)
+	return parts
+}
+
+// zoomHelpItems returns the help line's entries while zoomed in on a
+// value, where the slot keys move between parts.
+func (k Keymap) zoomHelpItems() []string {
+	var parts []string
+	add := func(desc string, actions ...string) {
+		if it := k.item(desc, actions...); it != "" {
+			parts = append(parts, it)
+		}
+	}
+	add("part", ActNextSlot, ActPrevSlot)
+	add("pick", ActUp, ActDown)
+	add("zoom out", ActZoom)
+	add("apply", ActAccept)
+	add("undo", ActUndo)
+	add("discard", ActBack)
 	return parts
 }

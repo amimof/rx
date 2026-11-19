@@ -77,12 +77,12 @@ keys:
 	}
 
 	t.Setenv("RX_KEY", "^Xr")
-	t.Setenv("RX_KEYS_NEXT_SLOT", "tab,ctrl+f")
+	t.Setenv("RX_KEYS_NEXT_SLOT", "tab,ctrl+b")
 	t.Setenv("RX_KEYS_RUN", "ctrl+r")
 	if c, err = Load(""); err != nil {
 		t.Fatal(err)
 	}
-	if c.Key != "^Xr" || !slices.Equal(c.Keys[tui.ActNextSlot], []string{"tab", "ctrl+f"}) {
+	if c.Key != "^Xr" || !slices.Equal(c.Keys[tui.ActNextSlot], []string{"tab", "ctrl+b"}) {
 		t.Fatalf("env: key %q, next-slot %v", c.Key, c.Keys[tui.ActNextSlot])
 	}
 	if !slices.Equal(c.Keys[tui.ActRun], []string{"ctrl+r"}) {
@@ -140,6 +140,27 @@ func TestFocus(t *testing.T) {
 	t.Setenv("RX_FOCUS", "last")
 	if c, err = Load(""); err != nil || c.Focus != spec.FocusLast {
 		t.Fatalf("env focus %q, err %v", c.Focus, err)
+	}
+}
+
+func TestFocusLast(t *testing.T) {
+	dir := home(t)
+	c, err := Load("")
+	if err != nil || !c.FocusLast {
+		t.Fatalf("default focus_last %v, err %v", c.FocusLast, err)
+	}
+	write(t, filepath.Join(dir, "rx", "config.yaml"), "focus_last: false\n")
+	if c, err = Load(""); err != nil || c.FocusLast {
+		t.Fatalf("focus_last %v, err %v", c.FocusLast, err)
+	}
+	// The environment overrides the file.
+	t.Setenv("RX_FOCUS_LAST", "true")
+	if c, err = Load(""); err != nil || !c.FocusLast {
+		t.Fatalf("env focus_last %v, err %v", c.FocusLast, err)
+	}
+	t.Setenv("RX_FOCUS_LAST", "maybe")
+	if _, err = Load(""); err == nil || !strings.Contains(err.Error(), "focus_last: want true or false") {
+		t.Fatalf("invalid focus_last: err %v", err)
 	}
 }
 

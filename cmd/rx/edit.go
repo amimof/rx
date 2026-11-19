@@ -106,7 +106,9 @@ func runEdit(shellName string, cursor int, buf string) error {
 		focusList = sp.Focus
 	}
 	var store *focus.Store
-	if focusList.Remembers() {
+	// With focus_last off, "last" entries resolve to nothing and are
+	// skipped, and nothing is remembered.
+	if cfg.FocusLast && focusList.Remembers() {
 		store = focus.Load(filepath.Join(cacheDir(), "focus.json"))
 	}
 	opts := tui.Options{
