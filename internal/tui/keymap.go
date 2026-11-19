@@ -32,6 +32,10 @@ const (
 	// ActQuote cycles how the focused value is quoted: single quotes,
 	// double quotes, then only if needed.
 	ActQuote = "quote"
+	// ActInsert loads the focused value, or the zoomed part, into the
+	// search with a cursor to edit it in place. Pressed again, it applies
+	// the edit.
+	ActInsert = "insert"
 )
 
 // Keymap maps editor actions to the keys that trigger them. Keys are named
@@ -57,6 +61,7 @@ func DefaultKeys() Keymap {
 		ActLink:     {"ctrl+q"},
 		ActZoom:     {"ctrl+f"},
 		ActQuote:    {"ctrl+y"},
+		ActInsert:   {"alt+i"},
 	}
 }
 
@@ -166,6 +171,7 @@ func (k Keymap) helpItems(undo bool) []string {
 	add("drop", ActDrop)
 	add("link", ActLink)
 	add("zoom", ActZoom)
+	add("insert", ActInsert)
 	add("quote", ActQuote)
 	if undo {
 		add("undo", ActUndo)
@@ -185,9 +191,24 @@ func (k Keymap) zoomHelpItems() []string {
 	}
 	add("part", ActNextSlot, ActPrevSlot)
 	add("pick", ActUp, ActDown)
+	add("insert", ActInsert)
 	add("zoom out", ActZoom)
 	add("apply", ActAccept)
 	add("undo", ActUndo)
 	add("discard", ActBack)
 	return parts
+}
+
+// insertHelpItems returns the help line's entries in insert mode, where
+// readline keys edit the search at the cursor.
+func (k Keymap) insertHelpItems() []string {
+	parts := []string{"←/→ move", "^a/^e ends", "M-b/M-f word", "^w/^u/^k kill"}
+	if it := k.item("pick", ActUp, ActDown); it != "" {
+		parts = append(parts, it)
+	}
+	apply := "enter apply"
+	if l := k.label(ActInsert); l != "" {
+		apply = l + "/" + apply
+	}
+	return append(parts, apply, "esc discard")
 }

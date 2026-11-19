@@ -88,13 +88,20 @@ func (m *Model) zoomMove(d int) {
 	z := m.zoom
 	ed := z.split.Editable()
 	i := (slices.Index(ed, z.at) + d + len(ed)) % len(ed)
+	m.zoomWrite()
+	z.at = ed[i]
+	m.query, m.sel, m.pin = "", -1, ""
+	m.load()
+}
+
+// zoomWrite writes the pending part value into the split, as one zoom undo
+// entry.
+func (m *Model) zoomWrite() {
+	z := m.zoom
 	if v := m.partValue(); v != "" && v != z.split.Parts[z.at].Text {
 		z.undo = append(z.undo, z.split)
 		z.split = z.split.Set(z.at, v)
 	}
-	z.at = ed[i]
-	m.query, m.sel, m.pin = "", -1, ""
-	m.load()
 }
 
 // partValue is the pending value of the zoomed part: the selected row, else
@@ -159,8 +166,9 @@ func (m *Model) loadZoom() {
 }
 
 // renderZoomed renders the focused slot while zoomed in: the zoomed part,
-// bytes lo to hi of val, reversed and the rest underlined.
-func (m *Model) renderZoomed(k model.Kind, name, sep, val string, lo, hi int) string {
+// bytes lo to hi of val, reversed and the rest underlined. In insert mode,
+// the cursor at byte cur of val, if in the part, is not reversed.
+func (m *Model) renderZoomed(k model.Kind, name, sep, val string, lo, hi, cur int) string {
 	ns, vs := m.st.flag, m.st.value
 	if k == model.Positional {
 		vs = m.st.arg
@@ -173,13 +181,18 @@ func (m *Model) renderZoomed(k model.Kind, name, sep, val string, lo, hi int) st
 	if sep != "" {
 		out += lipgloss.NewStyle().Render(sep)
 	}
-	for _, p := range []struct {
-		s  string
-		st lipgloss.Style
-	}{{val[:lo], ul}, {val[lo:hi], vs.Reverse(true)}, {val[hi:], ul}} {
-		if p.s != "" {
-			out += p.st.Render(p.s)
-		}
+	if val[:lo] != "" {
+		out += ul.Render(val[:lo])
+	}
+	// A cursor after the part shows as a cell only at the end of val, so it
+	// doesn't look like a space in the value.
+	if cur >= lo && (cur < hi || cur == len(val)) {
+		out += withCursor(val[lo:hi], cur-lo, vs.Reverse(true), vs)
+	} else if val[lo:hi] != "" {
+		out += vs.Reverse(true).Render(val[lo:hi])
+	}
+	if val[hi:] != "" {
+		out += ul.Render(val[hi:])
 	}
 	return out
 }

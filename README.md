@@ -80,6 +80,7 @@ rx-doctor
 | `Ctrl+D` | Remove the current slot |
 | `Ctrl+Q` | [Link](#configuration) the slot to the other slots with the same value |
 | `Ctrl+F` | [Zoom](#zoom) in on the slot to edit one part of its value, e.g. a URL's port |
+| `Alt+I` | [Insert](#insert-mode): edit the slot's value, or the zoomed part, in place with a cursor |
 | `Ctrl+Y` | [Quote](#quoting) the slot's value: single quotes, double quotes, then only if needed |
 | `Ctrl+Z` | Undo the last edit, along with what [rules](#rules) did after it |
 | `Ctrl+U` / `Ctrl+W` | Clear the search |
@@ -116,6 +117,7 @@ keys:                      # editor keys; a list replaces that action's defaults
   undo:      [ctrl+z]
   link:      [ctrl+q]       # edit every slot with the focused slot's value
   zoom:      [ctrl+f]       # edit one part of the focused value
+  insert:    [alt+i]        # edit the focused value in place with a cursor
   quote:     [ctrl+y]       # cycle how the focused value is quoted
 theme:                     # editor colors; a role replaces that role's default
   flag:   "#5f87ff"        # a string sets only the text color
@@ -137,6 +139,25 @@ Typing replaces the whole value of a slot. To change only part of it, press Ctrl
 - Ctrl-Z undoes the last part you changed. Esc clears what you typed; pressed again, it leaves zoom without changing the slot.
 
 rx recognises URLs (scheme, user, host, port, path segments, query parameters, fragment), `[user@]host[:port]`, `key=value`, comma lists and slash paths. Anything else is split on `/ : = , @ ? & ;` and spaces. A value with only one part can't be zoomed in on.
+
+### Insert mode
+
+To change a few characters without retyping the value, press Alt-I (`insert`). The focused value, or the zoomed part, is loaded into the search with a cursor at the end, and readline keys edit it in place. In `curl https://host:5000/v3/identity_providers/spoke-01/protocols/openid/auth`, turning `spoke-01` into `spoke-cluster-01` is Alt-I, Alt-B five times, Alt-F, then typing `-cluster` and pressing Enter. Zoomed in on `spoke-01`, it is Alt-I, Ctrl-A, Alt-F, `-cluster`, Enter.
+
+| Key | Action |
+|---|---|
+| `←` `→` / `Ctrl+B` `Ctrl+F` | Move one character |
+| `Home` `End` / `Ctrl+A` `Ctrl+E` | Move to the start / end |
+| `Alt+B` `Alt+F` / `Alt+←` `Alt+→` | Move one word. Words are letters and digits, so `-`, `/`, `.` and `_` end them |
+| `Backspace` / `Delete`, `Ctrl+D` | Delete before / at the cursor |
+| `Ctrl+W`, `Alt+D` | Delete the word before / after the cursor |
+| `Ctrl+U` / `Ctrl+K` | Delete to the start / end |
+| `↑` `↓` | Pick a suggestion; the next key edits it instead of the typed text |
+| `Alt+I` / `Enter` | Apply the edit and leave insert mode. Zoomed in, it is written to the part |
+| `Tab` / `Shift+Tab` | Apply the edit and move to the next / previous slot or part |
+| `Esc` | Leave insert mode without applying the edit |
+
+These keys win over their usual actions and plugin shortcuts, which do nothing until you leave insert mode. Suggestions are still filtered by the text. Only values can be edited; `+ flag` and flags without a value have none.
 
 ### Quoting
 
