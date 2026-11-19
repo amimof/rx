@@ -53,6 +53,11 @@ type Options struct {
 	// LastFocus is the key of the slot the user last edited in this
 	// command, which a spec.FocusLast entry refers to.
 	LastFocus string
+	// HideLegend leaves out the key legend below the editor.
+	HideLegend bool
+	// Version is shown on the bottom border, e.g. "rx v0.4.0"; empty
+	// shows none.
+	Version string
 }
 
 // When plugin rules run.
@@ -1221,7 +1226,10 @@ func (m *Model) View() string {
 		status = append(status, m.st.err.Render("  "+firstLine(m.errText)))
 	}
 
-	legend := m.legend(w)
+	var legend []string
+	if !m.o.HideLegend {
+		legend = m.legend(w)
+	}
 	// The borders, the search line and the status are always shown.
 	np, nr, nl := m.fit(len(preview), min(len(m.rows), listHeight), len(legend), 3+len(status))
 
@@ -1311,8 +1319,32 @@ func (m *Model) box(body, legend []string) string {
 			out = append(out, line(s))
 		}
 	}
-	out = append(out, m.st.border.Render("╰"+bar+"╯"))
+	out = append(out, m.bottom(w+2))
 	return strings.Join(out, "\n")
+}
+
+// bottom returns the bottom border, n columns between the corners, with
+// the version label near its right end if it fits.
+func (m *Model) bottom(n int) string {
+	label := versionLabel(m.o.Version)
+	lw := ansi.StringWidth(label)
+	if label == "" || lw+4 > n {
+		return m.st.border.Render("╰" + strings.Repeat("─", n) + "╯")
+	}
+	return m.st.border.Render("╰"+strings.Repeat("─", n-lw-3)+" ") +
+		m.st.dim.Render(label) + m.st.border.Render(" ─╯")
+}
+
+// versionLabel returns the label for version v: "rx v0.4.0" for "0.4.0"
+// or "v0.4.0", "rx dev" for "dev", and "" for "".
+func versionLabel(v string) string {
+	if v == "" {
+		return ""
+	}
+	if v[0] >= '0' && v[0] <= '9' {
+		v = "v" + v
+	}
+	return "rx " + v
 }
 
 func (m *Model) renderRow(i int) string {

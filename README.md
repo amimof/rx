@@ -102,6 +102,7 @@ complete: auto             # completion sources, or a list of them; plugins may 
 rules: live                # when plugin rules run: live, commit or off
 focus: last                # start on the slot last edited, for commands whose plugin sets no focus
 focus_last: true           # remember the slot last edited per command; false turns "last" off everywhere
+legend: true               # show the key legend below the editor
 keys:                      # editor keys; a list replaces that action's defaults
   accept:    [enter]
   run:       [ctrl+e]       # accept, then run the command
@@ -167,7 +168,7 @@ rx keeps a value's quoting when you edit it: `-m "msg"` becomes `-m "new"`, not 
 
 Theme roles are `head` (the command word), `flag`, `value` (a flag's value), `arg` (positional arguments), `sel` (the selected candidate), `spinner` (shown while candidates load), `dim` (descriptions, status and the help line), `err`, `border`, `prompt`, `focus` (the `=` between a focused flag and its value) and `link` (slots linked to the focused one). A role takes `fg` and `bg` colors, either an ANSI color number `0`–`255` or hex `#rgb`/`#rrggbb`, and `bold`, `italic`, `faint`, `underline` and `reverse`. Roles you don't list keep their default look. The focused slot is always shown reversed. Hex colors are approximated on terminals with fewer colors, and `NO_COLOR` turns colors off.
 
-Environment variables override the file: `RX_KEY`, `RX_LOG`, `RX_PROMPT`, `RX_RULES`, `RX_FOCUS`, `RX_FOCUS_LAST`, and `RX_COMPLETE` and `RX_KEYS_<ACTION>` with a comma-separated list, e.g. `RX_COMPLETE=history,shell` or `RX_KEYS_NEXT_SLOT=tab,ctrl+b`. The theme can only be set in the file.
+Environment variables override the file: `RX_KEY`, `RX_LOG`, `RX_PROMPT`, `RX_RULES`, `RX_FOCUS`, `RX_FOCUS_LAST`, `RX_LEGEND`, and `RX_COMPLETE` and `RX_KEYS_<ACTION>` with a comma-separated list, e.g. `RX_COMPLETE=history,shell` or `RX_KEYS_NEXT_SLOT=tab,ctrl+b`. The theme can only be set in the file.
 
 `key` and `log` are baked into the widget by `rx init`, so changes take effect in new shells. To use a different key than Ctrl-X Ctrl-X without the config file, set `RX_KEY` before the `eval` line, or call `rx-bind` after it. The key is written in caret notation (`^X^X`, `^[r` for Alt+r), which every shell accepts. bash also takes readline syntax (`\C-x\C-x`), and fish its own escapes (`\cx\cx`) and, from fish 4, key names (`ctrl-x,ctrl-x`). The default replaces the `exchange-point-and-mark` binding of zsh and bash in emacs mode; pick another key if you use it.
 

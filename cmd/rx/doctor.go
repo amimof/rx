@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -66,6 +67,7 @@ func runDoctor(shellName string) error {
 	if err == nil {
 		check("complete", cfg.Complete.String(), nil)
 		check("rules", cfg.Rules, nil)
+		check("legend", strconv.FormatBool(cfg.Legend), nil)
 	}
 
 	reg, err := loadRegistry()

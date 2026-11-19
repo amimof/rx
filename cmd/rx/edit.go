@@ -114,7 +114,7 @@ func runEdit(shellName string, cursor int, buf string) error {
 	opts := tui.Options{
 		Cmd: cmd, Spec: sp, History: e.hist, Engine: eng, Infer: e.hist, TTY: tty,
 		Keys: cfg.Keys, Prompt: cfg.Prompt, Theme: cfg.Theme, Rules: cfg.Rules,
-		Focus: focusList,
+		Focus: focusList, HideLegend: !cfg.Legend, Version: version,
 	}
 	if store != nil {
 		opts.LastFocus = store.Get(cmd.Name)

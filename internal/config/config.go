@@ -45,6 +45,8 @@ type Config struct {
 	// lists with spec.FocusLast (RX_FOCUS_LAST). Off, those entries are
 	// skipped and nothing is remembered.
 	FocusLast bool
+	// Legend shows the key legend below the editor (RX_LEGEND).
+	Legend bool
 	// Keys binds the editor's actions. Actions the file doesn't mention
 	// keep their defaults.
 	Keys tui.Keymap
@@ -84,7 +86,7 @@ func Load(file string) (*Config, error) {
 	v.SetConfigFile(file)
 	v.SetConfigType("yaml")
 	defaults := tui.DefaultKeys()
-	settings := []string{"key", "log", "prompt", "complete", "rules", "focus", "focus_last"}
+	settings := []string{"key", "log", "prompt", "complete", "rules", "focus", "focus_last", "legend"}
 	for a := range defaults {
 		settings = append(settings, "keys."+a)
 	}
@@ -92,7 +94,7 @@ func Load(file string) (*Config, error) {
 		_ = v.BindEnv(s, envName(s))
 	}
 
-	c := &Config{Key: DefaultKey, Prompt: tui.DefaultPrompt, Rules: tui.RulesLive, FocusLast: true, Keys: defaults, Theme: tui.DefaultTheme()}
+	c := &Config{Key: DefaultKey, Prompt: tui.DefaultPrompt, Rules: tui.RulesLive, FocusLast: true, Legend: true, Keys: defaults, Theme: tui.DefaultTheme()}
 	if err := v.ReadInConfig(); err == nil {
 		c.File = file
 	} else if explicit || !errors.Is(err, fs.ErrNotExist) {
@@ -132,14 +134,17 @@ func Load(file string) (*Config, error) {
 			return nil, fmt.Errorf("config %s: focus: want %s or nothing, got %q", file, spec.FocusLast, c.Focus)
 		}
 	}
-	if v.IsSet("focus_last") {
-		// YAML gives a bool, the environment a string.
-		s := fmt.Sprint(v.Get("focus_last"))
-		b, err := strconv.ParseBool(s)
-		if err != nil {
-			return nil, fmt.Errorf("config %s: focus_last: want true or false, got %q", file, s)
+	for _, s := range []struct {
+		key string
+		dst *bool
+	}{{"focus_last", &c.FocusLast}, {"legend", &c.Legend}} {
+		if v.IsSet(s.key) {
+			b, err := boolSetting(v, s.key)
+			if err != nil {
+				return nil, fmt.Errorf("config %s: %w", file, err)
+			}
+			*s.dst = b
 		}
-		c.FocusLast = b
 	}
 	for a := range defaults {
 		if k := "keys." + a; v.IsSet(k) {
@@ -158,6 +163,17 @@ func Load(file string) (*Config, error) {
 		return nil, fmt.Errorf("config %s: %w", file, err)
 	}
 	return c, nil
+}
+
+// boolSetting reads the bool setting key. YAML gives a bool, the
+// environment a string.
+func boolSetting(v *viper.Viper, key string) (bool, error) {
+	s := fmt.Sprint(v.Get(key))
+	b, err := strconv.ParseBool(s)
+	if err != nil {
+		return false, fmt.Errorf("%s: want true or false, got %q", key, s)
+	}
+	return b, nil
 }
 
 // loadTheme sets the roles in v, the file's theme section, in t. A role is
@@ -239,7 +255,7 @@ func checkKnown(v *viper.Viper, actions tui.Keymap) error {
 	sort.Strings(keys)
 	for _, k := range keys {
 		// The complete and theme sections are checked as they are loaded.
-		if k == "key" || k == "log" || k == "prompt" || k == "rules" || k == "focus" || k == "focus_last" || k == "keys" ||
+		if k == "key" || k == "log" || k == "prompt" || k == "rules" || k == "focus" || k == "focus_last" || k == "legend" || k == "keys" ||
 			k == "complete" || strings.HasPrefix(k, "complete.") || k == "theme" || strings.HasPrefix(k, "theme.") {
 			continue
 		}

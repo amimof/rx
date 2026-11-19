@@ -982,3 +982,55 @@ func TestSlotParts(t *testing.T) {
 		}
 	}
 }
+
+// TestViewLegendAndVersion checks that HideLegend leaves out the legend and
+// its separator, plugin shortcuts included, and that the version sits on
+// the bottom border either way.
+func TestViewLegendAndVersion(t *testing.T) {
+	for _, hide := range []bool{false, true} {
+		h := newHarness(t, "curl -X POST http://localhost:7878", nil)
+		h.m.o.HideLegend, h.m.o.Version = hide, "0.4.0"
+		h.m.width = 80
+		lines := strings.Split(ansi.Strip(h.m.View()), "\n")
+		view := strings.Join(lines, "\n")
+		for _, s := range []string{"├", "cycle method", "accept"} {
+			if strings.Contains(view, s) == hide {
+				t.Errorf("hide %v: %q shown %v:\n%s", hide, s, !hide, view)
+			}
+		}
+		last := lines[len(lines)-1]
+		if !strings.HasSuffix(last, "─ rx v0.4.0 ─╯") || ansi.StringWidth(last) != ansi.StringWidth(lines[0]) {
+			t.Errorf("hide %v: bottom border %q, top %q", hide, last, lines[0])
+		}
+	}
+}
+
+func TestVersionLabel(t *testing.T) {
+	for v, want := range map[string]string{
+		"":                       "",
+		"0.4.0":                  "rx v0.4.0",
+		"v0.4.0":                 "rx v0.4.0",
+		"v0.4.0-3-gabc123-dirty": "rx v0.4.0-3-gabc123-dirty",
+		"dev":                    "rx dev",
+	} {
+		if got := versionLabel(v); got != want {
+			t.Errorf("versionLabel(%q) = %q, want %q", v, got, want)
+		}
+	}
+	// Too narrow for the label, and no version: a plain border.
+	m := &Model{o: Options{Version: "0.4.0"}}
+	for _, tt := range []struct {
+		version string
+		n       int
+	}{{"0.4.0", 12}, {"", 40}} {
+		m.o.Version = tt.version
+		want := "╰" + strings.Repeat("─", tt.n) + "╯"
+		if got := ansi.Strip(m.bottom(tt.n)); got != want {
+			t.Errorf("bottom(%d) with %q = %q, want %q", tt.n, tt.version, got, want)
+		}
+	}
+	m.o.Version = "0.4.0"
+	if got := ansi.Strip(m.bottom(13)); got != "╰─ rx v0.4.0 ─╯" {
+		t.Errorf("bottom(13) = %q", got)
+	}
+}
