@@ -80,6 +80,7 @@ rx-doctor
 | `Ctrl+D` | Remove the current slot |
 | `Ctrl+Q` | [Link](#configuration) the slot to the other slots with the same value |
 | `Ctrl+F` | [Zoom](#zoom) in on the slot to edit one part of its value, e.g. a URL's port |
+| `Ctrl+Y` | [Quote](#quoting) the slot's value: single quotes, double quotes, then only if needed |
 | `Ctrl+Z` | Undo the last edit, along with what [rules](#rules) did after it |
 | `Ctrl+U` / `Ctrl+W` | Clear the search |
 | `Esc` | Clear the search, press again to cancel |
@@ -115,6 +116,7 @@ keys:                      # editor keys; a list replaces that action's defaults
   undo:      [ctrl+z]
   link:      [ctrl+q]       # edit every slot with the focused slot's value
   zoom:      [ctrl+f]       # edit one part of the focused value
+  quote:     [ctrl+y]       # cycle how the focused value is quoted
 theme:                     # editor colors; a role replaces that role's default
   flag:   "#5f87ff"        # a string sets only the text color
   value:  { fg: 2, bold: true }
@@ -135,6 +137,12 @@ Typing replaces the whole value of a slot. To change only part of it, press Ctrl
 - Ctrl-Z undoes the last part you changed. Esc clears what you typed; pressed again, it leaves zoom without changing the slot.
 
 rx recognises URLs (scheme, user, host, port, path segments, query parameters, fragment), `[user@]host[:port]`, `key=value`, comma lists and slash paths. Anything else is split on `/ : = , @ ? & ;` and spaces. A value with only one part can't be zoomed in on.
+
+### Quoting
+
+Ctrl-Y (`quote`) changes how the focused value is quoted, as one edit: `'single'`, then `"double"`, then only if needed (`plain`, or `'a b'` for a value with spaces). A style that would write the value the same way is skipped, e.g. "only if needed" for `a b`. A value with `!` is never double-quoted, since bash and zsh would expand it from history. A value you typed or picked is applied first.
+
+rx keeps a value's quoting when you edit it: `-m "msg"` becomes `-m "new"`, not `-m new`. A value with an expansion such as `$NS` is quoted as written, so `'$NS'` and `"\$NS"` no longer expand it.
 
 Theme roles are `head` (the command word), `flag`, `value` (a flag's value), `arg` (positional arguments), `sel` (the selected candidate), `spinner` (shown while candidates load), `dim` (descriptions, status and the help line), `err`, `border`, `prompt`, `focus` (the `=` between a focused flag and its value) and `link` (slots linked to the focused one). A role takes `fg` and `bg` colors, either an ANSI color number `0`–`255` or hex `#rgb`/`#rrggbb`, and `bold`, `italic`, `faint`, `underline` and `reverse`. Roles you don't list keep their default look. The focused slot is always shown reversed. Hex colors are approximated on terminals with fewer colors, and `NO_COLOR` turns colors off.
 
@@ -167,7 +175,7 @@ transforms:
   - { key: ctrl+o, op: cycle, flag: output, desc: "cycle output" }
 ```
 
-A transform `key` is `ctrl+<letter>`, `alt+<char>`, or a bare character, which means `alt+<char>`. Plugin shortcuts take precedence over the editor's own keys, so avoid `ctrl+` keys you use in the editor (by default `ctrl+c`, `d`, `e`, `f`, `n`, `p`, `q`, `s`, `u`, `w` and `z`). `ctrl+i` and `ctrl+m` can't be used, since terminals send them as Tab and Enter.
+A transform `key` is `ctrl+<letter>`, `alt+<char>`, or a bare character, which means `alt+<char>`. Plugin shortcuts take precedence over the editor's own keys, so avoid `ctrl+` keys you use in the editor (by default `ctrl+c`, `d`, `e`, `f`, `n`, `p`, `q`, `s`, `u`, `w`, `y` and `z`). `ctrl+i` and `ctrl+m` can't be used, since terminals send them as Tab and Enter.
 
 A `cycle` transform steps through the transform's `values`, or else the flag's or positional's `values`. If neither has any, rx cycles through the candidates the editor would list for that slot: history first, then completions. Cycling focuses the slot and selects its new value in the list.
 

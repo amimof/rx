@@ -130,6 +130,27 @@ func TestTransforms(t *testing.T) {
 			func(c *model.Command, s *spec.Spec) error { return Set(c, s, "namespace", "staging") },
 			"k get pods -l 'app=nginx' -n staging",
 		},
+		// An edited value keeps the quoting it was written with.
+		{
+			`k get pods -n "prod"`,
+			func(c *model.Command, s *spec.Spec) error { return Set(c, s, "namespace", "staging") },
+			`k get pods -n "staging"`,
+		},
+		{
+			`k get pods --namespace='prod'`,
+			func(c *model.Command, s *spec.Spec) error { return Set(c, s, "namespace", "staging") },
+			`k get pods --namespace='staging'`,
+		},
+		{
+			`k get pods -n"prod"`,
+			func(c *model.Command, s *spec.Spec) error { return Set(c, s, "namespace", "staging") },
+			`k get pods -n"staging"`,
+		},
+		{
+			`k get "pods"`,
+			func(c *model.Command, s *spec.Spec) error { return Set(c, s, "resource", "svc") },
+			`k get "svc"`,
+		},
 	}
 	for _, tt := range tests {
 		cmd, sp := setup(t, tt.in)

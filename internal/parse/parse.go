@@ -19,6 +19,8 @@ type Word struct {
 	// and Dynamic is set.
 	Value   string
 	Dynamic bool
+	// Quote is ' or " when the whole word is one quoted string, else 0.
+	Quote byte
 	// Start and End are byte offsets into the buffer.
 	Start, End int
 }
@@ -56,10 +58,14 @@ func Parse(buf string) *Line {
 		for _, w := range call.Args {
 			start, end := int(w.Pos().Offset()), int(w.End().Offset())
 			val, dyn := unquote(w)
+			var q byte
 			if dyn {
+				// Value holds the quotes of a dynamic word already.
 				val = buf[start:end]
+			} else {
+				q = quoteOf(w)
 			}
-			seg.Words = append(seg.Words, Word{Raw: buf[start:end], Value: val, Dynamic: dyn, Start: start, End: end})
+			seg.Words = append(seg.Words, Word{Raw: buf[start:end], Value: val, Dynamic: dyn, Quote: q, Start: start, End: end})
 		}
 		seg.Start = seg.Words[0].Start
 		seg.End = seg.Words[len(seg.Words)-1].End
@@ -99,6 +105,36 @@ func (l *Line) SegmentAt(cursor int) int {
 func (l *Line) Splice(i int, text string) string {
 	s := l.Segments[i]
 	return l.Text[:s.Start] + text + l.Text[s.End:]
+}
+
+// QuoteOf returns ' or " if raw is exactly one single- or double-quoted
+// string, and 0 otherwise.
+func QuoteOf(raw string) byte {
+	l := Parse(": " + raw)
+	if len(l.Segments) != 1 || len(l.Segments[0].Words) != 2 {
+		return 0
+	}
+	if w := l.Segments[0].Words[1]; w.Raw == raw {
+		return w.Quote
+	}
+	return 0
+}
+
+func quoteOf(w *syntax.Word) byte {
+	if len(w.Parts) != 1 {
+		return 0
+	}
+	switch p := w.Parts[0].(type) {
+	case *syntax.SglQuoted:
+		if !p.Dollar {
+			return '\''
+		}
+	case *syntax.DblQuoted:
+		if !p.Dollar {
+			return '"'
+		}
+	}
+	return 0
 }
 
 func unquote(w *syntax.Word) (string, bool) {
@@ -209,4 +245,26 @@ func Quote(s string) string {
 		return s
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// QuoteAs returns s quoted with q: ' and " always quote, and 0 quotes only
+// if needed, as Quote does. Double quotes fall back to single quotes when s
+// contains "!", which bash and zsh would expand from history.
+func QuoteAs(s string, q byte) string {
+	switch {
+	case q == '"' && !strings.Contains(s, "!"):
+		var sb strings.Builder
+		sb.WriteByte('"')
+		for i := 0; i < len(s); i++ {
+			if strings.IndexByte("$`\"\\", s[i]) >= 0 {
+				sb.WriteByte('\\')
+			}
+			sb.WriteByte(s[i])
+		}
+		sb.WriteByte('"')
+		return sb.String()
+	case q == '"' || q == '\'':
+		return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+	}
+	return Quote(s)
 }

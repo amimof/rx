@@ -89,7 +89,7 @@ func (c *Classifier) Classify(line *parse.Line, seg int) *model.Command {
 			key, label = p.Name, p.Name
 		}
 		cmd.Slots = append(cmd.Slots, model.Slot{
-			Kind: model.Positional, Key: key, Label: label, Value: w.Value, Index: pos, Raw: w.Raw,
+			Kind: model.Positional, Key: key, Label: label, Value: w.Value, Index: pos, Raw: w.Raw, Quote: w.Quote,
 		})
 		pos++
 	}
@@ -118,17 +118,19 @@ func (c *Classifier) Classify(line *parse.Line, seg int) *model.Command {
 		switch {
 		case hasEq:
 			slot.Value, slot.Style = val, model.Equals
+			slot.Quote = quoteAfter(w.Raw, name+"=")
 		case !long && len(name) > 2 && fs == nil:
 			// "-nfoo": attached value if the single-letter flag takes one.
 			if f := sp.Flag(name[:2]); f != nil && c.takes(cmd.Name, f, name[:2]) {
 				slot.Key, slot.Name, slot.Label = f.Name, name[:2], "--"+f.Name
 				slot.Value, slot.Style = name[2:], model.Attached
+				slot.Quote = quoteAfter(w.Raw, name[:2])
 			} else {
 				slot.Kind = model.Bool
 			}
 		case c.takes(cmd.Name, fs, name) && i+1 < len(words):
 			i++
-			slot.Value = words[i].Value
+			slot.Value, slot.Quote = words[i].Value, words[i].Quote
 			slot.Raw = line.Text[w.Start:words[i].End]
 		default:
 			slot.Kind = model.Bool
@@ -153,6 +155,17 @@ func (c *Classifier) takes(cmd string, fs *FlagSpec, name string) bool {
 		}
 	}
 	return fs != nil && (len(fs.Values) > 0 || fs.Provider != "")
+}
+
+// quoteAfter returns the quoting of a value written right after prefix in
+// raw, e.g. ' for "--x='v'" with prefix "--x=". It is 0 if raw doesn't start
+// with prefix as written, e.g. when the flag name itself is quoted.
+func quoteAfter(raw, prefix string) byte {
+	v, ok := strings.CutPrefix(raw, prefix)
+	if !ok {
+		return 0
+	}
+	return parse.QuoteOf(v)
 }
 
 func isNumber(s string) bool {

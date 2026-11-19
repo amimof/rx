@@ -79,8 +79,12 @@ keys:
 	t.Setenv("RX_KEY", "^Xr")
 	t.Setenv("RX_KEYS_NEXT_SLOT", "tab,ctrl+b")
 	t.Setenv("RX_KEYS_RUN", "ctrl+r")
+	t.Setenv("RX_KEYS_QUOTE", "alt+'")
 	if c, err = Load(""); err != nil {
 		t.Fatal(err)
+	}
+	if !slices.Equal(c.Keys[tui.ActQuote], []string{"alt+'"}) {
+		t.Fatalf("env: quote %v", c.Keys[tui.ActQuote])
 	}
 	if c.Key != "^Xr" || !slices.Equal(c.Keys[tui.ActNextSlot], []string{"tab", "ctrl+b"}) {
 		t.Fatalf("env: key %q, next-slot %v", c.Key, c.Keys[tui.ActNextSlot])
