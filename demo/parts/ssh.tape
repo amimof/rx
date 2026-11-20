@@ -9,6 +9,8 @@ Ctrl+X
 Sleep 1s
 Ctrl+N
 Sleep 500ms
+Tab
+Sleep 500ms
 Ctrl+N
 Sleep 500ms
 Tab
