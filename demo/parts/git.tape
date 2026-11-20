@@ -8,7 +8,7 @@ Sleep 75ms
 Ctrl+X
 Sleep 1s
 Ctrl+q
-Sleep 500ms
+Sleep 750ms
 Type v0.40.1-beta.1
-Sleep 500ms
+Sleep 750ms
 Enter@2s

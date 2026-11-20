@@ -1,9 +1,9 @@
-# Shared setup, sourced by every demo tape. Run vhs from demo/, since VHS
-# resolves Source paths and the shell resolves ../bin from there.
-Set FontSize 16
+# Shared setup, sourced by every demo tape. Run vhs from demo/, since VHS resolves Source paths and the shell resolves ../bin from there.
+Set FontSize 18
 Set Width 1300
-Set Height 650
+Set Height 450
 Set Shell "zsh"
+Set Theme "GitHub Dark"
 
 # Initialize rx and clear the screen before recording starts. The sourcing
 # tape calls Show, so it can run its own hidden setup first.

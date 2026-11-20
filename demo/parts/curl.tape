@@ -12,7 +12,6 @@ Sleep 1s
 Ctrl+f
 Sleep 500ms
 Tab@500ms 2
-Sleep 500ms
 Type '8443'
 Sleep 500ms
 Tab@500ms 3
@@ -29,7 +28,24 @@ Sleep 2s
 Tab@500ms 2
 Type 'max'
 Sleep 500ms
-Tab@500ms
-Ctrl+N
-Sleep 750ms
+Tab
+Sleep 500ms
+Type '10'
+Enter@2s
+
+# Quote url
+Ctrl+u
+Type 'curl -fsSL https://example.com/download/rx_$(uname -s)_$(uname -m).tar.gz'
+Sleep 1s
+# open rx
+Ctrl+X
+Sleep 75ms
+Ctrl+X
+Sleep 1s
+Tab
+Sleep 500ms
+Ctrl+y
+Sleep 500ms
+Ctrl+y
+Sleep 500ms
 Enter@2s
