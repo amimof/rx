@@ -951,6 +951,72 @@ func TestViewHeight(t *testing.T) {
 	}
 }
 
+// TestConfiguredHeight checks that Options.Height caps the view, and that
+// the list grows to fill it.
+func TestConfiguredHeight(t *testing.T) {
+	newH := func(height Height, term int) *harness {
+		h := newHarness(t, "curl -H x", nil)
+		for i := range 30 {
+			h.m.merge(fmt.Sprintf("X-Cand-%02d: v", i), "", "spec", 0, i)
+		}
+		h.m.filter()
+		h.m.width = 80
+		h.m.height = term
+		h.m.o.Height = height
+		return h
+	}
+	lines := func(h *harness) int { return strings.Count(h.m.View(), "\n") + 1 }
+	rows := func(h *harness) int { return strings.Count(h.m.View(), "X-Cand-") }
+
+	for _, tt := range []struct {
+		height    Height
+		term, max int
+	}{
+		{Height{N: 25}, 50, 25},
+		{Height{N: 25}, 0, 25},  // unknown terminal height
+		{Height{N: 25}, 15, 15}, // the terminal is smaller
+		{Height{N: 50, Percent: true}, 60, 30},
+		{Height{N: 3}, 50, 7}, // below the lines always shown
+	} {
+		h := newH(tt.height, tt.term)
+		if n := lines(h); n > tt.max {
+			t.Errorf("height %v, terminal %d: %d lines, want at most %d:\n%s", tt.height, tt.term, n, tt.max, h.m.View())
+		}
+		if v := h.m.View(); !strings.HasPrefix(v, "╭") || !strings.Contains(v, "header:") {
+			t.Errorf("height %v, terminal %d: no border or search line:\n%s", tt.height, tt.term, v)
+		}
+	}
+
+	// The list grows past its default 8 rows to fill the height.
+	if n := rows(newH(Height{N: 30}, 50)); n <= listHeight {
+		t.Errorf("height 30: %d rows, want more than %d", n, listHeight)
+	}
+	if n := rows(newH(Height{}, 50)); n != listHeight {
+		t.Errorf("unset height: %d rows, want %d", n, listHeight)
+	}
+	// A percentage of an unknown terminal height doesn't limit the view.
+	a, b := newH(Height{N: 50, Percent: true}, 0), newH(Height{}, 0)
+	if a.m.View() != b.m.View() {
+		t.Errorf("percentage of unknown height changes the view:\n%s\n%s", a.m.View(), b.m.View())
+	}
+}
+
+func TestParseHeight(t *testing.T) {
+	for in, want := range map[string]Height{"20": {N: 20}, "40%": {N: 40, Percent: true}, "100%": {N: 100, Percent: true}} {
+		if h, err := ParseHeight(in); err != nil || h != want {
+			t.Errorf("ParseHeight(%q) = %v, %v; want %v", in, h, err, want)
+		}
+		if h, _ := ParseHeight(in); h.String() != in {
+			t.Errorf("%q: String() = %q", in, h.String())
+		}
+	}
+	for _, in := range []string{"", "0", "-1", "0%", "101%", "abc", "%", "2.5"} {
+		if _, err := ParseHeight(in); err == nil {
+			t.Errorf("ParseHeight(%q): no error", in)
+		}
+	}
+}
+
 func TestPreviewPrompt(t *testing.T) {
 	h := newHarness(t, "k get pods -n monitoring", nil)
 	if p := h.m.preview(); !strings.HasPrefix(p, "k get") {

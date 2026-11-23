@@ -191,6 +191,27 @@ func TestLegend(t *testing.T) {
 	}
 }
 
+func TestHeight(t *testing.T) {
+	dir := home(t)
+	c, err := Load("")
+	if err != nil || c.Height != (tui.Height{}) {
+		t.Fatalf("default height %v, err %v", c.Height, err)
+	}
+	write(t, filepath.Join(dir, "rx", "config.yaml"), "height: 20\n")
+	if c, err = Load(""); err != nil || c.Height != (tui.Height{N: 20}) {
+		t.Fatalf("height %v, err %v", c.Height, err)
+	}
+	write(t, filepath.Join(dir, "rx", "config.yaml"), "height: 40%\n")
+	if c, err = Load(""); err != nil || c.Height != (tui.Height{N: 40, Percent: true}) {
+		t.Fatalf("percent height %v, err %v", c.Height, err)
+	}
+	// The environment overrides the file.
+	t.Setenv("RX_HEIGHT", "12")
+	if c, err = Load(""); err != nil || c.Height != (tui.Height{N: 12}) {
+		t.Fatalf("env height %v, err %v", c.Height, err)
+	}
+}
+
 func TestComplete(t *testing.T) {
 	dir := home(t)
 	c, err := Load("")
@@ -276,6 +297,11 @@ func TestInvalid(t *testing.T) {
 		{"complete: { cobra: true }\n", "complete: want a source or a list"},
 		{"focus: first\n", `focus: want last or nothing, got "first"`},
 		{"rules: always\n", `rules: want one of live, commit, off, got "always"`},
+		{"height: 0\n", `height: want a number of lines or a percentage up to 100%, got "0"`},
+		{"height: -3\n", `height: want a number`},
+		{"height: tall\n", `height: want a number`},
+		{"height: 150%\n", `height: want a number`},
+		{"height: 0%\n", `height: want a number`},
 	} {
 		dir := home(t)
 		write(t, filepath.Join(dir, "rx", "config.yaml"), tt.yaml)

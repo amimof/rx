@@ -9,6 +9,7 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -55,6 +56,9 @@ type Options struct {
 	LastFocus string
 	// HideLegend leaves out the key legend below the editor.
 	HideLegend bool
+	// Height is the most lines the editor takes; the zero value fits it
+	// to the terminal with a list of at most 8 rows.
+	Height Height
 	// Version is shown on the bottom border, e.g. "rx v0.4.0"; empty
 	// shows none.
 	Version string
@@ -73,6 +77,35 @@ const (
 
 // RulesModes lists the values of Options.Rules.
 var RulesModes = []string{RulesLive, RulesCommit, RulesOff}
+
+// Height is the editor's maximum height: a number of lines, or with
+// Percent a percentage of the terminal height. The zero value is unset.
+type Height struct {
+	N       int
+	Percent bool
+}
+
+// ParseHeight parses a height such as "20" or "40%".
+func ParseHeight(s string) (Height, error) {
+	t := strings.TrimSpace(s)
+	num, pct := strings.CutSuffix(t, "%")
+	n, err := strconv.Atoi(num)
+	if err != nil || n < 1 || pct && n > 100 {
+		return Height{}, fmt.Errorf("want a number of lines or a percentage up to 100%%, got %q", s)
+	}
+	return Height{N: n, Percent: pct}, nil
+}
+
+// String returns the height as ParseHeight reads it, or "" if unset.
+func (h Height) String() string {
+	switch {
+	case h.N <= 0:
+		return ""
+	case h.Percent:
+		return strconv.Itoa(h.N) + "%"
+	}
+	return strconv.Itoa(h.N)
+}
 
 // Outcome is the result of an editing session.
 type Outcome struct {
@@ -1231,7 +1264,12 @@ func (m *Model) View() string {
 		legend = m.legend(w)
 	}
 	// The borders, the search line and the status are always shown.
-	np, nr, nl := m.fit(len(preview), min(len(m.rows), listHeight), len(legend), 3+len(status))
+	// With a configured height the list may fill it.
+	rows := len(m.rows)
+	if m.o.Height.N <= 0 || m.limit() <= 0 {
+		rows = min(rows, listHeight)
+	}
+	np, nr, nl := m.fit(len(preview), rows, len(legend), 3+len(status))
 
 	body := window(preview, np, focusLine, w)
 	body = append(body, search)
@@ -1246,12 +1284,32 @@ func (m *Model) View() string {
 	return m.box(body, legend[:nl])
 }
 
-// fit returns how many preview lines, list rows and legend lines fit in the
-// terminal height, given that fixed lines are always shown. It shrinks the
-// list to 3 rows, then drops the legend, then shrinks the list to 1 row,
-// then clips the preview, keeping at least a line of it.
+// limit returns the most lines the view may take: the terminal height,
+// lowered to Options.Height, or 0 for no limit. A percentage of an unknown
+// terminal height sets none.
+func (m *Model) limit() int {
+	h := m.o.Height
+	switch {
+	case h.N <= 0:
+		return m.height
+	case h.Percent:
+		if m.height <= 0 {
+			return 0
+		}
+		return max(m.height*h.N/100, 1)
+	case m.height <= 0:
+		return h.N
+	}
+	return min(h.N, m.height)
+}
+
+// fit returns how many preview lines, list rows and legend lines fit in
+// limit, given that fixed lines are always shown. It shrinks the list to 3
+// rows, then drops the legend, then shrinks the list to 1 row, then clips
+// the preview, keeping at least a line of it.
 func (m *Model) fit(preview, rows, legend, fixed int) (int, int, int) {
-	if m.height <= 0 {
+	limit := m.limit()
+	if limit <= 0 {
 		return preview, rows, legend
 	}
 	over := func() int {
@@ -1259,7 +1317,7 @@ func (m *Model) fit(preview, rows, legend, fixed int) (int, int, int) {
 		if legend > 0 {
 			n += 1 + legend // and the separator
 		}
-		return n - m.height
+		return n - limit
 	}
 	shrink := func(floor int) {
 		if o := over(); o > 0 && rows > floor {
