@@ -47,6 +47,9 @@ type Config struct {
 	FocusLast bool
 	// Legend shows the key legend below the editor (RX_LEGEND).
 	Legend bool
+	// Height is the editor's maximum height in lines or as a percentage
+	// of the terminal (RX_HEIGHT); unset fits it to the terminal.
+	Height tui.Height
 	// Keys binds the editor's actions. Actions the file doesn't mention
 	// keep their defaults.
 	Keys tui.Keymap
@@ -86,7 +89,7 @@ func Load(file string) (*Config, error) {
 	v.SetConfigFile(file)
 	v.SetConfigType("yaml")
 	defaults := tui.DefaultKeys()
-	settings := []string{"key", "log", "prompt", "complete", "rules", "focus", "focus_last", "legend"}
+	settings := []string{"key", "log", "prompt", "complete", "rules", "focus", "focus_last", "legend", "height"}
 	for a := range defaults {
 		settings = append(settings, "keys."+a)
 	}
@@ -145,6 +148,14 @@ func Load(file string) (*Config, error) {
 			}
 			*s.dst = b
 		}
+	}
+	if v.IsSet("height") {
+		// YAML gives a number, the environment and "40%" a string.
+		h, err := tui.ParseHeight(fmt.Sprint(v.Get("height")))
+		if err != nil {
+			return nil, fmt.Errorf("config %s: height: %w", file, err)
+		}
+		c.Height = h
 	}
 	for a := range defaults {
 		if k := "keys." + a; v.IsSet(k) {
@@ -255,7 +266,7 @@ func checkKnown(v *viper.Viper, actions tui.Keymap) error {
 	sort.Strings(keys)
 	for _, k := range keys {
 		// The complete and theme sections are checked as they are loaded.
-		if k == "key" || k == "log" || k == "prompt" || k == "rules" || k == "focus" || k == "focus_last" || k == "legend" || k == "keys" ||
+		if k == "key" || k == "log" || k == "prompt" || k == "rules" || k == "focus" || k == "focus_last" || k == "legend" || k == "height" || k == "keys" ||
 			k == "complete" || strings.HasPrefix(k, "complete.") || k == "theme" || strings.HasPrefix(k, "theme.") {
 			continue
 		}

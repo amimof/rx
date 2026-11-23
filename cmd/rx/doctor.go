@@ -68,6 +68,11 @@ func runDoctor(shellName string) error {
 		check("complete", cfg.Complete.String(), nil)
 		check("rules", cfg.Rules, nil)
 		check("legend", strconv.FormatBool(cfg.Legend), nil)
+		height := cfg.Height.String()
+		if height == "" {
+			height = "auto"
+		}
+		check("height", height, nil)
 	}
 
 	reg, err := loadRegistry()
