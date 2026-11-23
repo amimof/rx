@@ -1,7 +1,9 @@
 #!/bin/sh
 # Stands in for `rx edit` under a shell widget, for every shell's widget
-# tests. Sends each line of $RX_SCRIPT as
-# a request and appends the responses (up to END) to $RX_OUT/resp.N.
+# tests. Sends each line of $RX_SCRIPT as a request and writes the response
+# (up to END) to $RX_OUT/resp.N. The response is written to resp.N.part and
+# renamed once END has arrived, so resp.N only appears complete: tests wait
+# for it to exist and then read it.
 #   DIE          exit without sending anything (rx crashed)
 #   DIEAFTER X   send X, then exit without reading the response
 #   DONE/CANCEL/ERROR  sent, then exit
@@ -16,7 +18,8 @@ while IFS= read -r req <&3; do
   case $req in DONE*|CANCEL|ERROR*) exit 0 ;; esac
   n=$((n + 1))
   while IFS= read -r l; do
-    printf '%s\n' "$l" >> "$RX_OUT/resp.$n"
+    printf '%s\n' "$l"
     [ "$l" = END ] && break
-  done
+  done > "$RX_OUT/resp.$n.part"
+  mv "$RX_OUT/resp.$n.part" "$RX_OUT/resp.$n"
 done 3< "$RX_SCRIPT"
